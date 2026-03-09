@@ -1,0 +1,168 @@
+{
+  "config": {
+    "configFile": "C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\generated-tests\\playwright.run.ec6944e1-9fe2-4750-8770-ff1a23930081.config.ts",
+    "rootDir": "C:/Users/Prasanna/Documents/GitHub/AI-Agent-Testc/backend/generated-tests/f9d89c3e-1fb3-4d52-8e35-395aed5fd664",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "C:/Users/Prasanna/Documents/GitHub/AI-Agent-Testc/backend/artifacts/ec6944e1-9fe2-4750-8770-ff1a23930081",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "C:/Users/Prasanna/Documents/GitHub/AI-Agent-Testc/backend/generated-tests/f9d89c3e-1fb3-4d52-8e35-395aed5fd664",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json",
+        {
+          "outputFile": "../artifacts/ec6944e1-9fe2-4750-8770-ff1a23930081/results.json"
+        }
+      ],
+      [
+        "list",
+        null
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "runAgents": "none",
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.58.2",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "e_suite_test_login.spec.ts",
+      "file": "e_suite_test_login.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "E-suite",
+          "file": "e_suite_test_login.spec.ts",
+          "line": 3,
+          "column": 6,
+          "specs": [
+            {
+              "title": "Test Login",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 20436,
+                      "error": {
+                        "message": "TimeoutError: locator.fill: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#email')\u001b[22m\n",
+                        "stack": "TimeoutError: locator.fill: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#email')\u001b[22m\n\n    at C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\generated-tests\\f9d89c3e-1fb3-4d52-8e35-395aed5fd664\\e_suite_test_login.spec.ts:13:34",
+                        "location": {
+                          "file": "C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\generated-tests\\f9d89c3e-1fb3-4d52-8e35-395aed5fd664\\e_suite_test_login.spec.ts",
+                          "column": 34,
+                          "line": 13
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 11 |\u001b[39m\n \u001b[90m 12 |\u001b[39m     \u001b[90m// Enter valid email\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 13 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m'#email'\u001b[39m)\u001b[33m.\u001b[39mfill(\u001b[32m'test@example.com'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                                  \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 14 |\u001b[39m\n \u001b[90m 15 |\u001b[39m     \u001b[90m// Enter valid password\u001b[39m\n \u001b[90m 16 |\u001b[39m     \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m'#password'\u001b[39m)\u001b[33m.\u001b[39mfill(\u001b[32m'password123'\u001b[39m)\u001b[33m;\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\generated-tests\\f9d89c3e-1fb3-4d52-8e35-395aed5fd664\\e_suite_test_login.spec.ts",
+                            "column": 34,
+                            "line": 13
+                          },
+                          "message": "TimeoutError: locator.fill: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#email')\u001b[22m\n\n\n  11 |\n  12 |     // Enter valid email\n> 13 |     await page.locator('#email').fill('test@example.com');\n     |                                  ^\n  14 |\n  15 |     // Enter valid password\n  16 |     await page.locator('#password').fill('password123');\n    at C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\generated-tests\\f9d89c3e-1fb3-4d52-8e35-395aed5fd664\\e_suite_test_login.spec.ts:13:34"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-03-08T19:42:34.840Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\artifacts\\ec6944e1-9fe2-4750-8770-ff1a23930081\\e_suite_test_login-E-suite-Test-Login-chromium\\test-failed-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\artifacts\\ec6944e1-9fe2-4750-8770-ff1a23930081\\e_suite_test_login-E-suite-Test-Login-chromium\\video.webm"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\artifacts\\ec6944e1-9fe2-4750-8770-ff1a23930081\\e_suite_test_login-E-suite-Test-Login-chromium\\error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\artifacts\\ec6944e1-9fe2-4750-8770-ff1a23930081\\e_suite_test_login-E-suite-Test-Login-chromium\\trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\Users\\Prasanna\\Documents\\GitHub\\AI-Agent-Testc\\backend\\generated-tests\\f9d89c3e-1fb3-4d52-8e35-395aed5fd664\\e_suite_test_login.spec.ts",
+                        "column": 34,
+                        "line": 13
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "9e92cecec82c1489f368-7f5818f8c7162aa0c725",
+              "file": "e_suite_test_login.spec.ts",
+              "line": 4,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-03-08T19:42:33.317Z",
+    "duration": 22859.351,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

@@ -1,0 +1,82 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - link "🛒 TechStore" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - generic [ref=e7]:
+        - link "Home" [ref=e8] [cursor=pointer]:
+          - /url: /
+        - link "Login" [ref=e9] [cursor=pointer]:
+          - /url: /login
+        - link "Register" [ref=e10] [cursor=pointer]:
+          - /url: /register
+  - main [ref=e11]:
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - heading "Welcome to TechStore" [level=1] [ref=e14]
+        - paragraph [ref=e15]: Your one-stop shop for all electronics and accessories
+      - generic [ref=e16]:
+        - textbox "Search products..." [ref=e17]
+        - combobox [ref=e18]:
+          - option "All Categories" [selected]
+          - option "Electronics"
+          - option "Accessories"
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - img "Wireless Headphones" [ref=e21]
+          - heading "Wireless Headphones" [level=3] [ref=e22]
+          - paragraph [ref=e23]: Electronics
+          - paragraph [ref=e24]: High-quality wireless headphones with noise cancellation
+          - paragraph [ref=e25]: $79.99
+          - paragraph [ref=e26]: In Stock (15)
+          - link "View Details" [ref=e27] [cursor=pointer]:
+            - /url: /product/1
+        - generic [ref=e28]:
+          - img "USB-C Cable" [ref=e29]
+          - heading "USB-C Cable" [level=3] [ref=e30]
+          - paragraph [ref=e31]: Accessories
+          - paragraph [ref=e32]: Durable USB-C charging and data cable
+          - paragraph [ref=e33]: $12.99
+          - paragraph [ref=e34]: In Stock (50)
+          - link "View Details" [ref=e35] [cursor=pointer]:
+            - /url: /product/2
+        - generic [ref=e36]:
+          - img "Phone Case" [ref=e37]
+          - heading "Phone Case" [level=3] [ref=e38]
+          - paragraph [ref=e39]: Accessories
+          - paragraph [ref=e40]: Protective phone case with shock absorption
+          - paragraph [ref=e41]: $19.99
+          - paragraph [ref=e42]: In Stock (30)
+          - link "View Details" [ref=e43] [cursor=pointer]:
+            - /url: /product/3
+        - generic [ref=e44]:
+          - img "Portable Charger" [ref=e45]
+          - heading "Portable Charger" [level=3] [ref=e46]
+          - paragraph [ref=e47]: Electronics
+          - paragraph [ref=e48]: 20000mAh portable power bank
+          - paragraph [ref=e49]: $34.99
+          - paragraph [ref=e50]: In Stock (20)
+          - link "View Details" [ref=e51] [cursor=pointer]:
+            - /url: /product/4
+        - generic [ref=e52]:
+          - img "Screen Protector" [ref=e53]
+          - heading "Screen Protector" [level=3] [ref=e54]
+          - paragraph [ref=e55]: Accessories
+          - paragraph [ref=e56]: Tempered glass screen protector
+          - paragraph [ref=e57]: $9.99
+          - paragraph [ref=e58]: In Stock (40)
+          - link "View Details" [ref=e59] [cursor=pointer]:
+            - /url: /product/5
+        - generic [ref=e60]:
+          - img "Smart Watch" [ref=e61]
+          - heading "Smart Watch" [level=3] [ref=e62]
+          - paragraph [ref=e63]: Electronics
+          - paragraph [ref=e64]: Feature-rich smartwatch with health tracking
+          - paragraph [ref=e65]: $199.99
+          - paragraph [ref=e66]: In Stock (10)
+          - link "View Details" [ref=e67] [cursor=pointer]:
+            - /url: /product/6
+```
