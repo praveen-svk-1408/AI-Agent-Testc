@@ -23,7 +23,7 @@ class TestRun(Base):
     browser: Mapped[str] = mapped_column(
         String(50), nullable=False, default="chromium"
     )  # chromium, firefox, webkit
-    headed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    headed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(nullable=True)

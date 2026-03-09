@@ -30,23 +30,41 @@ actionable plan that downstream agents will execute.
 Application context:
 - Name / Description: {app_description}
 - Base URL: {base_url}
+- Test Type: {test_type}
+
+Test type guidance:
+- "functional": Focus on individual feature behavior — form submissions, navigation,
+  CRUD operations.  Test ONE feature flow per goal.
+- "e2e": Focus on complete user journeys across multiple pages — login → browse → add
+  to cart → checkout.  Goals should span the full flow.
+- "integration": Focus on how components interact — API calls, data persistence,
+  cross-page state.  Verify data flows correctly between systems.
+- "accessibility": Focus on WCAG compliance — keyboard navigation, ARIA attributes,
+  color contrast, screen reader compatibility, focus management.
+- "visual": Focus on layout and visual appearance — element positioning, responsive
+  breakpoints, visual regressions.
+- "performance": Focus on load times, responsiveness, resource usage — page load speed,
+  interaction latency, network requests.
 
 Given the test description below, produce a structured plan with:
-1. **goals** – Atomic, verifiable testing goals (each small enough to map to one
-   test case).  Be specific: "Verify the login form shows 'Email is required'
-   when submitted empty" is better than "Test login validation."
+1. **goals** – ONLY the goals that are explicitly described or directly implied by
+   the user's requirement.  Do NOT invent additional scenarios, negative tests, or
+   edge cases that the user did not ask for.  If the user says "login with valid
+   credentials", that is ONE goal — do not add "login with wrong password" etc.
 2. **pages** – Relative URL paths the test must visit (e.g. "/login", "/dashboard").
 3. **preconditions** – Setup needed before any test runs (e.g. "user account exists").
-4. **assertions** – Concrete, observable outcomes to verify (visible text, URL
-   changes, element states, toast messages, etc.).
-5. **edge_cases** – Boundary or negative scenarios to cover (empty fields, long
-   input, special characters, etc.).
+4. **assertions** – Concrete, observable outcomes to verify that correspond to the
+   user's stated goals (visible text, URL changes, element states, etc.).
+   Only include assertions for the goals above — no extras.
+5. **edge_cases** – List them ONLY if the user explicitly mentions negative or
+   boundary testing.  If the description is about a happy-path flow, leave this
+   list EMPTY.  Never auto-generate edge cases the user did not request.
 
 Think step-by-step:
-- First, identify WHAT the user wants tested.
-- Then, break it into the smallest independent goals.
+- First, identify EXACTLY what the user wants tested — nothing more, nothing less.
+- Produce goals that map 1-to-1 with the user's described scenarios.
 - For each goal, note which page and which assertions apply.
-- Finally, consider edge cases that a good QA engineer would add.
+- Do NOT expand scope beyond the user's description.
 
 IMPORTANT: Respond with ONLY a valid JSON object. No markdown code fences.
 
@@ -67,6 +85,7 @@ def create_orchestrator():
         model=settings.ollama_model,
         temperature=settings.llm_temperature,
         base_url=settings.ollama_base_url,
+        num_predict=2048,
     )
 
     parser = RobustPydanticOutputParser(pydantic_model=StructuredTestIntent)
@@ -85,6 +104,7 @@ async def analyze_requirements(
     description: str,
     base_url: str,
     app_description: str | None = None,
+    test_type: str = "functional",
 ) -> StructuredTestIntent:
     """
     Decompose a test requirement into a structured plan (sub-goals, pages,
@@ -99,6 +119,7 @@ async def analyze_requirements(
         "description": description,
         "base_url": base_url,
         "app_description": app_description or "Web application",
+        "test_type": test_type,
         "format_instructions": parser.get_format_instructions(),
     })
 

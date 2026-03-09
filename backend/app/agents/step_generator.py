@@ -1,8 +1,8 @@
 """
 Step Generator Agent  (ReAct with DOM context).
 
-Takes IEEE 829 test cases + page snapshots (real DOM) and converts each
-high-level test step into a concrete, executable Playwright action.
+Takes a structured test intent (goals, assertions, pages) + page snapshots
+(real DOM) and converts them into concrete, executable Playwright actions.
 
 Supported actions:
   navigate, click, type, fill, verify_text, verify_element, wait, screenshot
@@ -17,8 +17,7 @@ from pydantic import BaseModel, model_validator
 
 from app.config import get_settings
 from app.schemas.agent import (
-    IEEE829TestCase,
-    TestDesignOutput,
+    StructuredTestIntent,
     PageSnapshot,
     GeneratedTestStep,
 )
@@ -47,13 +46,15 @@ class StepGeneratorOutput(BaseModel):
 SYSTEM_PROMPT = """\
 You are an expert Playwright test-automation engineer.
 
+Test Type: {test_type}
+
 You receive:
- • One or more IEEE 829 test cases (each with high-level steps and expected results).
+ • A structured test intent with goals, assertions, preconditions, and edge cases.
  • Live DOM context: real interactive elements, selectors, and forms extracted from the
    target pages.
 
-Your task: convert every high-level test step into one or more CONCRETE Playwright
-actions, producing an ordered flat list of executable steps.
+Your task: convert every goal and assertion into CONCRETE Playwright actions,
+producing an ordered flat list of executable steps.
 
 Allowed actions (use ONLY these):
   navigate       – go to a URL                         (value = URL)
@@ -66,22 +67,31 @@ Allowed actions (use ONLY these):
   wait           – wait for element / URL / networkidle (selector or value)
   screenshot     – capture a screenshot                (value = optional label)
 
-ReAct reasoning – for each IEEE 829 step, think:
-  THOUGHT: What concrete browser interaction does this require?
+ReAct reasoning – for each goal, think:
+  THOUGHT: What concrete browser interactions does this goal require?
   ACTION:  Which DOM element (from page context) should I target?
            Use the EXACT selector from the DOM context – do NOT invent selectors.
   OBSERVE: What should the expected_result be so the Step Reviewer can verify it?
 
 Rules:
-1. Start every test case with a "navigate" step to the correct page URL.
-2. After navigation or page-changing actions add a "wait" step.
+1. Start with a "navigate" step to the correct page URL.
+2. Add a "wait" step ONLY after navigate actions — do NOT add waits between
+   every action (Playwright auto-waits for elements).
 3. For form fills use "fill" (faster) unless character-by-character input matters.
-4. End each test case's steps with "verify_text" or "verify_element" assertions that
-   match the IEEE 829 expected results.
+4. Include "verify_text" or "verify_element" assertions that match each assertion
+   from the test intent.
 5. Prefer stable selectors: data-testid > role-based > aria-label > id > name > text.
 6. Use realistic but safe test data (e.g. "testuser@example.com", "Password123!").
-7. Include a "screenshot" step after critical assertions for evidence.
+7. Include ONE "screenshot" step at the end of each goal for evidence — not after
+   every assertion.
 8. Every step MUST have a descriptive "description" field.
+9. ONLY generate steps for the goals and assertions listed.  If edge_cases are
+   provided, cover them.  If edge_cases is empty or "None", do NOT invent
+   negative/boundary scenarios on your own.
+10. Be CONCISE — aim for 3-8 steps per goal.  Combine related fills without
+    inserting waits between them.  The total should typically be under 25 steps.
+11. This is ONE test case — produce a SINGLE sequential flow, not multiple
+    independent test scenarios concatenated together.
 {reviewer_feedback}
 Available page information:
 {page_context}
@@ -92,11 +102,15 @@ IMPORTANT: Respond with ONLY a valid JSON object. No markdown code fences.
 """
 
 USER_PROMPT = """\
-IEEE 829 Test Cases to implement:
-{test_cases_text}
+Test Intent:
+- Goals: {goals}
+- Pages: {pages}
+- Preconditions: {preconditions}
+- Assertions: {assertions}
+- Edge Cases: {edge_cases}
 
-Generate the flat list of executable Playwright steps covering ALL test cases above.
-Order steps sequentially across all test cases (step 1, 2, 3 … N).
+Generate the flat list of executable Playwright steps covering ALL goals and assertions above.
+Order steps sequentially (step 1, 2, 3 … N).
 """
 
 
@@ -107,7 +121,7 @@ def _format_page_context(snapshots: list[PageSnapshot]) -> str:
         part = f"\n--- Page: {snap.page_url} (Title: {snap.page_title}) ---\n"
         if snap.elements:
             part += "Interactive elements:\n"
-            for el in snap.elements[:80]:
+            for el in snap.elements[:50]:
                 attrs = ", ".join(f"{k}={v}" for k, v in el.attributes.items()) if el.attributes else ""
                 part += f"  - [{el.element_type}] selector='{el.selector}' text='{el.text or ''}' {attrs}\n"
         if snap.forms:
@@ -120,30 +134,13 @@ def _format_page_context(snapshots: list[PageSnapshot]) -> str:
     return "\n".join(parts) if parts else "No page data available."
 
 
-def _format_test_cases(test_design: TestDesignOutput) -> str:
-    """Format IEEE 829 test cases into a prompt-friendly text block."""
-    lines = []
-    for tc in test_design.test_cases:
-        lines.append(f"\n[{tc.tc_id}] {tc.title}  (category={tc.category}, priority={tc.priority})")
-        if tc.preconditions:
-            lines.append("  Preconditions: " + "; ".join(tc.preconditions))
-        for i, (step, exp) in enumerate(
-            zip(tc.test_steps, tc.expected_results), start=1
-        ):
-            lines.append(f"  Step {i}: {step}")
-            lines.append(f"    Expected: {exp}")
-        # Handle extra expected_results beyond test_steps length
-        for j in range(len(tc.test_steps), len(tc.expected_results)):
-            lines.append(f"    Expected ({j+1}): {tc.expected_results[j]}")
-    return "\n".join(lines)
-
-
 def create_step_generator():
     """Create the step generator chain."""
     llm = ChatOllama(
         model=settings.ollama_model,
         temperature=settings.llm_temperature,
         base_url=settings.ollama_base_url,
+        num_predict=4096,
     )
 
     parser = RobustPydanticOutputParser(pydantic_model=StepGeneratorOutput)
@@ -158,22 +155,22 @@ def create_step_generator():
 
 
 async def generate_steps(
-    test_design: TestDesignOutput,
+    intent: StructuredTestIntent,
     snapshots: list[PageSnapshot],
     feedback: str | None = None,
+    test_type: str = "functional",
 ) -> StepGeneratorOutput:
     """
-    Generate executable Playwright steps from IEEE 829 test cases + DOM.
+    Generate executable Playwright steps from structured test intent + DOM.
 
     Args:
-        test_design: Output of the Test Generator (IEEE 829 test cases).
-        snapshots:   Crawled page snapshots with real DOM selectors.
-        feedback:    Optional feedback from the Step Reviewer for re-generation.
+        intent:    Output of the Orchestrator (goals, assertions, pages).
+        snapshots: Crawled page snapshots with real DOM selectors.
+        feedback:  Optional feedback from the Step Reviewer for re-generation.
     """
     chain, parser = create_step_generator()
 
     page_context = _format_page_context(snapshots)
-    test_cases_text = _format_test_cases(test_design)
 
     reviewer_feedback = ""
     if feedback:
@@ -183,14 +180,19 @@ async def generate_steps(
         )
 
     logger.info(
-        "StepGenerator: converting %d IEEE 829 test cases into Playwright steps (feedback=%s)",
-        len(test_design.test_cases), bool(feedback),
+        "StepGenerator: converting %d goals into Playwright steps (feedback=%s)",
+        len(intent.goals), bool(feedback),
     )
 
     result: StepGeneratorOutput = await chain.ainvoke({
         "page_context": page_context,
-        "test_cases_text": test_cases_text,
+        "goals": "\n".join(f"- {g}" for g in intent.goals),
+        "pages": "\n".join(f"- {p}" for p in intent.pages),
+        "preconditions": "\n".join(f"- {p}" for p in intent.preconditions) or "None",
+        "assertions": "\n".join(f"- {a}" for a in intent.assertions) or "None",
+        "edge_cases": "\n".join(f"- {e}" for e in intent.edge_cases) or "None",
         "reviewer_feedback": reviewer_feedback,
+        "test_type": test_type,
         "format_instructions": parser.get_format_instructions(),
     })
 

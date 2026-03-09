@@ -5,9 +5,13 @@ from pydantic import BaseModel, Field
 
 # --- Request Schemas ---
 
+TEST_TYPES = ["functional", "e2e", "integration", "accessibility", "visual", "performance"]
+
+
 class CreateTestCaseRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     description: str = Field(..., min_length=1)
+    test_type: str = Field(default="functional", pattern="^(functional|e2e|integration|accessibility|visual|performance)$")
 
 
 # --- Response Schemas ---
@@ -29,6 +33,7 @@ class TestCaseResponse(BaseModel):
     suite_id: uuid.UUID
     title: str
     description: str
+    test_type: str
     status: str
     generation_attempts: int
     created_at: datetime

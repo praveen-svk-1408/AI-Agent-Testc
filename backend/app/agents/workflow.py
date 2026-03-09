@@ -4,9 +4,9 @@ LangGraph Workflow — Plan-and-Execute Multi-Agent Orchestrator.
 Pipeline:
   1. Orchestrator  (Plan)     — decompose NL requirement into sub-goals
   2. Page Crawler  (Execute)  — visit pages, extract DOM
-  3. Test Generator (IEEE 829) — produce structured test cases from goals + DOM
-  4. Step Generator (ReAct)   — convert test cases into executable Playwright steps
-  5. Step Reviewer             — validate / fix steps against real DOM (loop)
+  3. Step Generator (ReAct)   — convert goals into executable Playwright steps
+  4. Step Reviewer             — validate / fix steps against real DOM (loop)
+  5. Test Generator (IEEE 829) — produce structured test cases from reviewed steps
 """
 
 import logging
@@ -42,6 +42,7 @@ class WorkflowState(TypedDict):
     description: str
     base_url: str
     app_description: str | None
+    test_type: str  # functional, e2e, integration, accessibility, visual, performance
 
     # After Orchestrator
     intent: StructuredTestIntent | None
@@ -76,6 +77,14 @@ def _add_progress(state: WorkflowState, message: str) -> list[str]:
     return msgs
 
 
+def _ensure_step_order(steps: list[GeneratedTestStep]) -> list[GeneratedTestStep]:
+    """Ensure every step has a non-null order assigned sequentially."""
+    for i, step in enumerate(steps, start=1):
+        if step.order is None:
+            step.order = i
+    return steps
+
+
 # ── Node: 1 – Orchestrator ───────────────────────────────────────────
 
 async def orchestrator_node(state: WorkflowState) -> dict:
@@ -87,6 +96,7 @@ async def orchestrator_node(state: WorkflowState) -> dict:
             description=state["description"],
             base_url=state["base_url"],
             app_description=state.get("app_description"),
+            test_type=state.get("test_type", "functional"),
         )
         return {
             "intent": intent,
@@ -141,54 +151,19 @@ async def crawl_node(state: WorkflowState) -> dict:
         }
 
 
-# ── Node: 3 – Test Generator (IEEE 829) ─────────────────────────────
+# ── Node: 3 – Step Generator ─────────────────────────────────────────
 
-async def test_generator_node(state: WorkflowState) -> dict:
-    """Generate IEEE 829 test cases from intent + DOM context."""
-    logger.info("Workflow node: test_generator (IEEE 829)")
-    intent = state["intent"]
+async def step_generator_node(state: WorkflowState) -> dict:
+    """Convert test intent goals into executable Playwright steps."""
+    logger.info("Workflow node: step_generator (iteration %d)", state.get("iteration", 1))
+    intent = state.get("intent")
     snapshots = state.get("page_snapshots", [])
 
     if not intent:
         return {
             "status": "failed",
-            "error": "No intent available for test-case design",
-            "progress_messages": _add_progress(state, "Error: No intent for test design"),
-        }
-
-    try:
-        test_design = await generate_test_cases(intent, snapshots)
-        tc_ids = [tc.tc_id for tc in test_design.test_cases]
-        return {
-            "test_design": test_design,
-            "status": "running",
-            "progress_messages": _add_progress(
-                state,
-                f"TestGenerator: designed {len(test_design.test_cases)} IEEE 829 test cases ({', '.join(tc_ids)})"
-            ),
-        }
-    except Exception as e:
-        logger.error("Test design failed: %s", str(e))
-        return {
-            "status": "failed",
-            "error": f"Test design failed: {str(e)}",
-            "progress_messages": _add_progress(state, f"Error: Test design failed – {str(e)}"),
-        }
-
-
-# ── Node: 4 – Step Generator ─────────────────────────────────────────
-
-async def step_generator_node(state: WorkflowState) -> dict:
-    """Convert IEEE 829 test cases into executable Playwright steps."""
-    logger.info("Workflow node: step_generator (iteration %d)", state.get("iteration", 1))
-    test_design = state.get("test_design")
-    snapshots = state.get("page_snapshots", [])
-
-    if not test_design:
-        return {
-            "status": "failed",
-            "error": "No test design available for step generation",
-            "progress_messages": _add_progress(state, "Error: No test design for step gen"),
+            "error": "No intent available for step generation",
+            "progress_messages": _add_progress(state, "Error: No intent for step gen"),
         }
 
     try:
@@ -201,7 +176,8 @@ async def step_generator_node(state: WorkflowState) -> dict:
             feedback = "\n".join(parts) if parts else None
 
         result: StepGeneratorOutput = await generate_steps(
-            test_design, snapshots, feedback=feedback,
+            intent, snapshots, feedback=feedback,
+            test_type=state.get("test_type", "functional"),
         )
         return {
             "steps": result.steps,
@@ -221,7 +197,7 @@ async def step_generator_node(state: WorkflowState) -> dict:
         }
 
 
-# ── Node: 5 – Step Reviewer ──────────────────────────────────────────
+# ── Node: 4 – Step Reviewer ──────────────────────────────────────────
 
 async def step_reviewer_node(state: WorkflowState) -> dict:
     """Review steps against real DOM, fix hallucinated selectors."""
@@ -241,10 +217,11 @@ async def step_reviewer_node(state: WorkflowState) -> dict:
         iteration = state.get("iteration", 1)
 
         if review.approved:
+            final = _ensure_step_order(review.fixed_steps if review.fixed_steps else steps)
             return {
                 "review": review,
-                "final_steps": review.fixed_steps if review.fixed_steps else steps,
-                "status": "success",
+                "final_steps": final,
+                "status": "reviewed",
                 "progress_messages": _add_progress(
                     state,
                     f"StepReviewer: APPROVED (confidence: {review.confidence:.0%}, "
@@ -268,8 +245,8 @@ async def step_reviewer_node(state: WorkflowState) -> dict:
         # On review error, accept the steps with a warning
         return {
             "review": None,
-            "final_steps": steps,
-            "status": "success",
+            "final_steps": _ensure_step_order(steps),
+            "status": "reviewed",
             "error": f"Review skipped due to error: {str(e)}",
             "progress_messages": _add_progress(
                 state,
@@ -281,11 +258,11 @@ async def step_reviewer_node(state: WorkflowState) -> dict:
 # ── Conditional Edge ──────────────────────────────────────────────────
 
 def should_retry(state: WorkflowState) -> str:
-    """Decide whether to re-run the Step Generator or finish."""
+    """Decide whether to re-run the Step Generator, go to test generation, or finish."""
     if state.get("status") == "failed":
         return "end"
-    if state.get("status") == "success":
-        return "end"
+    if state.get("status") == "reviewed":
+        return "generate_tests"
 
     iteration = state.get("iteration", 1)
     max_iter = state.get("max_iterations", settings.max_reverification_attempts)
@@ -309,13 +286,62 @@ async def accept_node(state: WorkflowState) -> dict:
     confidence = review.confidence if review else 0.5
 
     return {
-        "final_steps": steps,
-        "status": "success",
+        "final_steps": _ensure_step_order(steps),
+        "status": "reviewed",
         "progress_messages": _add_progress(
             state,
             f"Accepted steps after max iterations (confidence: {confidence:.0%})"
         ),
     }
+
+
+# ── Node: 5 – Test Generator (IEEE 829) ─────────────────────────────
+
+async def test_generator_node(state: WorkflowState) -> dict:
+    """Generate IEEE 829 test cases from the reviewed steps."""
+    logger.info("Workflow node: test_generator (IEEE 829)")
+    intent = state.get("intent")
+    final_steps = state.get("final_steps", [])
+    snapshots = state.get("page_snapshots", [])
+
+    if not intent:
+        return {
+            "status": "failed",
+            "error": "No intent available for test-case design",
+            "progress_messages": _add_progress(state, "Error: No intent for test design"),
+        }
+
+    if not final_steps:
+        return {
+            "status": "failed",
+            "error": "No reviewed steps available for test-case design",
+            "progress_messages": _add_progress(state, "Error: No steps for test design"),
+        }
+
+    try:
+        test_design = await generate_test_cases(intent, final_steps, snapshots)
+        tc_ids = [tc.tc_id for tc in test_design.test_cases]
+        return {
+            "test_design": test_design,
+            "status": "success",
+            "progress_messages": _add_progress(
+                state,
+                f"TestGenerator: designed {len(test_design.test_cases)} IEEE 829 test cases "
+                f"({', '.join(tc_ids)}) from {len(final_steps)} reviewed steps"
+            ),
+        }
+    except Exception as e:
+        logger.error("Test design failed: %s", str(e))
+        # Even if test case generation fails, the steps are still valid — mark as success
+        return {
+            "test_design": None,
+            "status": "success",
+            "error": f"Test design failed (steps still valid): {str(e)}",
+            "progress_messages": _add_progress(
+                state,
+                f"Warning: Test case design failed – {str(e)}. Reviewed steps are still available."
+            ),
+        }
 
 
 # ── Graph Assembly ────────────────────────────────────────────────────
@@ -327,30 +353,34 @@ def build_workflow() -> StateGraph:
     # Add nodes
     workflow.add_node("orchestrator", orchestrator_node)
     workflow.add_node("crawl", crawl_node)
-    workflow.add_node("test_generator", test_generator_node)
     workflow.add_node("step_generator", step_generator_node)
     workflow.add_node("step_reviewer", step_reviewer_node)
     workflow.add_node("accept", accept_node)
+    workflow.add_node("test_generator", test_generator_node)
 
-    # Linear flow: orchestrator → crawl → test_generator → step_generator → step_reviewer
+    # Linear flow: orchestrator → crawl → step_generator → step_reviewer
     workflow.set_entry_point("orchestrator")
     workflow.add_edge("orchestrator", "crawl")
-    workflow.add_edge("crawl", "test_generator")
-    workflow.add_edge("test_generator", "step_generator")
+    workflow.add_edge("crawl", "step_generator")
     workflow.add_edge("step_generator", "step_reviewer")
 
-    # Conditional loop: step_reviewer → retry step_generator | accept | end
+    # Conditional loop: step_reviewer → retry step_generator | accept | generate_tests | end
     workflow.add_conditional_edges(
         "step_reviewer",
         should_retry,
         {
             "retry": "step_generator",
             "accept": "accept",
+            "generate_tests": "test_generator",
             "end": END,
         },
     )
 
-    workflow.add_edge("accept", END)
+    # After accept (max iterations), go to test_generator
+    workflow.add_edge("accept", "test_generator")
+
+    # test_generator is the final step
+    workflow.add_edge("test_generator", END)
 
     return workflow.compile()
 
@@ -372,12 +402,13 @@ async def run_workflow(
     description: str,
     base_url: str,
     app_description: str | None = None,
+    test_type: str = "functional",
     progress_callback=None,
 ) -> WorkflowState:
     """
     Run the complete Plan-and-Execute pipeline with real-time progress streaming.
 
-    Pipeline: Orchestrator → Crawler → TestGenerator → StepGenerator → StepReviewer
+    Pipeline: Orchestrator → Crawler → StepGenerator → StepReviewer → TestGenerator
 
     Returns the final workflow state with generated (and reviewed) steps.
     """
@@ -388,6 +419,7 @@ async def run_workflow(
         "description": description,
         "base_url": base_url,
         "app_description": app_description,
+        "test_type": test_type,
         "intent": None,
         "page_snapshots": [],
         "test_design": None,
@@ -414,9 +446,6 @@ async def run_workflow(
                 final_state = {**final_state, **node_output}
                 if progress_callback and "progress_messages" in node_output:
                     await progress_callback(node_output["progress_messages"])
-
-    logger.info("Workflow completed with status: %s", final_state.get("status"))
-    return final_state
 
     logger.info("Workflow completed with status: %s", final_state.get("status"))
     return final_state

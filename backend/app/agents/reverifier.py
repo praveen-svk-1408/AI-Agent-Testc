@@ -81,7 +81,7 @@ def _format_page_context(snapshots: list[PageSnapshot]) -> str:
         part = f"\n--- Page: {snap.page_url} (Title: {snap.page_title}) ---\n"
         if snap.elements:
             part += "Interactive elements:\n"
-            for el in snap.elements[:100]:
+            for el in snap.elements[:50]:
                 attrs = ", ".join(f"{k}={v}" for k, v in el.attributes.items()) if el.attributes else ""
                 part += f"  - [{el.element_type}] selector='{el.selector}' text='{el.text or ''}' {attrs}\n"
         if snap.forms:
@@ -117,6 +117,7 @@ def create_step_reviewer():
         model=settings.ollama_model,
         temperature=0.1,   # Low temp for precise, consistent review
         base_url=settings.ollama_base_url,
+        num_predict=4096,
     )
 
     parser = RobustPydanticOutputParser(pydantic_model=StepReviewResult)

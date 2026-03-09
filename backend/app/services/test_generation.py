@@ -68,6 +68,7 @@ async def generate_test_case_steps(
             description=test_case.description,
             base_url=suite.base_url,
             app_description=suite.app_description,
+            test_type=test_case.test_type,
             progress_callback=progress_callback,
         )
 
@@ -88,10 +89,10 @@ async def generate_test_case_steps(
         # Persist the generated steps
         final_steps: list[GeneratedTestStep] = workflow_state.get("final_steps", [])
         db_steps = []
-        for step in final_steps:
+        for i, step in enumerate(final_steps, start=1):
             db_step = TestStep(
                 case_id=case_id,
-                order=step.order,
+                order=step.order if step.order is not None else i,
                 action=step.action,
                 selector=step.selector,
                 value=step.value,

@@ -1,14 +1,14 @@
 """
 Test Generator Agent  (IEEE 829 · ReAct pattern).
 
-Takes a natural-language requirement + DOM context (page snapshots) and
-produces structured IEEE 829 test cases.
+Takes reviewed Playwright steps + the original test intent and produces
+structured IEEE 829 test cases that document what the steps cover.
 
 Each test case contains:
   TC-ID, Title, Category, Priority, Preconditions, Steps (NL), Expected Results.
 
-These high-level test cases are later handed to the Step Generator which
-converts them into concrete executable Playwright steps.
+This agent runs AFTER the Step Reviewer so that test cases accurately
+reflect the final executable steps.
 """
 
 import logging
@@ -20,6 +20,7 @@ from langchain_core.output_parsers import StrOutputParser
 from app.config import get_settings
 from app.schemas.agent import (
     StructuredTestIntent,
+    GeneratedTestStep,
     PageSnapshot,
     IEEE829TestCase,
     TestDesignOutput,
@@ -36,9 +37,11 @@ You are a senior QA test-design engineer using the IEEE 829 standard.
 
 Given:
  • A structured test intent (goals, assertions, edge-cases)
+ • Reviewed Playwright steps that have been validated against the real DOM
  • Live DOM context extracted from the target web pages
 
-Produce one or more IEEE 829 test cases.
+Your task: produce IEEE 829 test cases that accurately document the reviewed steps.
+Group related steps into logical test cases.
 
 Each test case must include:
   "tc_id"            – unique ID like "TC-001"
@@ -46,22 +49,22 @@ Each test case must include:
   "category"         – one of: functional, validation, navigation, security, usability
   "priority"         – high / medium / low
   "preconditions"    – list of setup requirements
-  "test_steps"       – ordered list of HIGH-LEVEL human-readable steps
-                        (e.g. "Enter valid email into the Email field")
+  "test_steps"       – ordered list of HIGH-LEVEL human-readable step descriptions
+                        derived from the reviewed Playwright steps
   "expected_results" – one expected outcome per step, in the same order
 
 ReAct reasoning – think step-by-step:
-  THOUGHT: What functionality or user flow does this goal exercise?
-  ACTION:  Which real DOM elements (from the page context) are involved?
-  OBSERVE: What text, URL change, or element state should be visible after each step?
+  THOUGHT: Which reviewed steps relate to the same goal or user flow?
+  ACTION:  Group them into a logical test case and derive human-readable descriptions.
+  OBSERVE: What expected result does each step produce?
 
 Rules:
 1. Every goal from the intent MUST map to at least one test case.
 2. Assertions from the intent MUST appear as expected_results.
-3. Include edge-case test cases where the intent lists them.
-4. Reference REAL selectors / element text from the DOM context so downstream
-   agents can locate the elements.  Do NOT hallucinate selectors.
-5. Keep steps concrete and unambiguous – avoid "the user should see something."
+3. Each test case should correspond to a coherent group of reviewed steps.
+4. Translate the concrete Playwright steps into human-readable test_steps
+   (e.g. a "fill" step on an email input → "Enter email address").
+5. Keep steps concrete and unambiguous.
 6. Number the tc_id sequentially: TC-001, TC-002, …
 
 Available page information:
@@ -80,7 +83,11 @@ Test Intent:
 - Assertions: {assertions}
 - Edge Cases: {edge_cases}
 
-Design IEEE 829 test cases that fully cover every goal, assertion, and edge case.
+Reviewed Playwright Steps:
+{steps_text}
+
+Design IEEE 829 test cases that document the reviewed steps above,
+grouping related steps into logical test cases that cover every goal and assertion.
 """
 
 
@@ -91,7 +98,7 @@ def _format_page_context(snapshots: list[PageSnapshot]) -> str:
         part = f"\n--- Page: {snap.page_url} (Title: {snap.page_title}) ---\n"
         if snap.elements:
             part += "Interactive elements:\n"
-            for el in snap.elements[:80]:
+            for el in snap.elements[:50]:
                 attrs = ", ".join(f"{k}={v}" for k, v in el.attributes.items()) if el.attributes else ""
                 part += f"  - [{el.element_type}] selector='{el.selector}' text='{el.text or ''}' {attrs}\n"
         if snap.forms:
@@ -104,12 +111,30 @@ def _format_page_context(snapshots: list[PageSnapshot]) -> str:
     return "\n".join(parts) if parts else "No page data available."
 
 
+def _format_steps(steps: list[GeneratedTestStep]) -> str:
+    """Format reviewed Playwright steps into a readable string for the LLM."""
+    lines = []
+    for step in steps:
+        line = f"  {step.order}. [{step.action}]"
+        if step.selector:
+            line += f" selector='{step.selector}'"
+        if step.value:
+            line += f" value='{step.value}'"
+        if step.expected_result:
+            line += f" expected='{step.expected_result}'"
+        if step.description:
+            line += f" — {step.description}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def create_test_generator():
     """Create the IEEE 829 test-generator chain."""
     llm = ChatOllama(
         model=settings.ollama_model,
         temperature=settings.llm_temperature,
         base_url=settings.ollama_base_url,
+        num_predict=4096,
     )
 
     parser = RobustPydanticOutputParser(pydantic_model=TestDesignOutput)
@@ -125,23 +150,33 @@ def create_test_generator():
 
 async def generate_test_cases(
     intent: StructuredTestIntent,
+    steps: list[GeneratedTestStep],
     snapshots: list[PageSnapshot],
 ) -> TestDesignOutput:
     """
-    Generate IEEE 829 test cases from the orchestrator plan and crawled DOM.
+    Generate IEEE 829 test cases from reviewed Playwright steps.
+
+    Runs after the Step Reviewer so test cases reflect the final executable steps.
+
+    Args:
+        intent:    Structured test intent from the Orchestrator.
+        steps:     Reviewed/approved Playwright steps.
+        snapshots: Crawled page snapshots with real DOM selectors.
 
     Returns a TestDesignOutput containing one or more IEEE829TestCase objects.
     """
     chain, parser = create_test_generator()
     page_context = _format_page_context(snapshots)
+    steps_text = _format_steps(steps)
 
     logger.info(
-        "TestGenerator: designing IEEE 829 cases for %d goals across %d pages",
-        len(intent.goals), len(snapshots),
+        "TestGenerator: designing IEEE 829 cases from %d reviewed steps for %d goals",
+        len(steps), len(intent.goals),
     )
 
     result: TestDesignOutput = await chain.ainvoke({
         "page_context": page_context,
+        "steps_text": steps_text,
         "goals": "\n".join(f"- {g}" for g in intent.goals),
         "pages": "\n".join(f"- {p}" for p in intent.pages),
         "preconditions": "\n".join(f"- {p}" for p in intent.preconditions) or "None",

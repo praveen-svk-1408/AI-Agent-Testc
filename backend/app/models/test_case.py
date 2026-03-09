@@ -19,6 +19,9 @@ class TestCase(Base):
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    test_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="functional"
+    )  # functional, e2e, integration, accessibility, visual, performance
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="draft"
     )  # draft, generating, generated, failed
