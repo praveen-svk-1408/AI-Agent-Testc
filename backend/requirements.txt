@@ -22,9 +22,6 @@ langgraph>=0.2.0,<0.3.0
 # Playwright
 playwright>=1.49.0,<2.0.0
 
-# MCP (Model Context Protocol)
-mcp>=1.0.0
-
 # Utilities
 python-dotenv>=1.0.1
 httpx>=0.28.0,<1.0.0

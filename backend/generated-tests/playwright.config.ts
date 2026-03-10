@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './f9d89c3e-1fb3-4d52-8e35-395aed5fd664',
+  testDir: './c9561683-ce8c-4cb7-be9f-875082024fd8',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 1,

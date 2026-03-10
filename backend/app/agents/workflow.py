@@ -44,6 +44,11 @@ class WorkflowState(TypedDict):
     app_description: str | None
     test_type: str  # functional, e2e, integration, accessibility, visual, performance
 
+    # Authentication (optional)
+    login_url: str | None
+    login_username: str | None
+    login_password: str | None
+
     # After Orchestrator
     intent: StructuredTestIntent | None
 
@@ -131,8 +136,23 @@ async def crawl_node(state: WorkflowState) -> dict:
 
     pages_to_crawl = intent.pages if intent.pages else ["/"]
 
+    login_url = state.get("login_url")
+    login_username = state.get("login_username")
+    login_password = state.get("login_password")
+
+    logger.info(
+        "crawl_node: base_url=%s, pages=%s, login_url=%s, login_username=%s, has_password=%s",
+        state["base_url"], pages_to_crawl, login_url, login_username, bool(login_password),
+    )
+
     try:
-        snapshots = await crawl_pages(state["base_url"], pages_to_crawl)
+        snapshots = await crawl_pages(
+            state["base_url"],
+            pages_to_crawl,
+            login_url=login_url,
+            login_username=login_username,
+            login_password=login_password,
+        )
         total_elements = sum(len(s.elements) for s in snapshots)
         return {
             "page_snapshots": snapshots,
@@ -403,6 +423,9 @@ async def run_workflow(
     base_url: str,
     app_description: str | None = None,
     test_type: str = "functional",
+    login_url: str | None = None,
+    login_username: str | None = None,
+    login_password: str | None = None,
     progress_callback=None,
 ) -> WorkflowState:
     """
@@ -420,6 +443,9 @@ async def run_workflow(
         "base_url": base_url,
         "app_description": app_description,
         "test_type": test_type,
+        "login_url": login_url,
+        "login_username": login_username,
+        "login_password": login_password,
         "intent": None,
         "page_snapshots": [],
         "test_design": None,

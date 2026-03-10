@@ -69,7 +69,7 @@ class GeneratedTestStep(BaseModel):
 class StepReviewResult(BaseModel):
     """Output of the Step Reviewer agent."""
     approved: bool
-    fixed_steps: list[GeneratedTestStep]    # Steps with corrected selectors
+    fixed_steps: list[GeneratedTestStep] = []   # Steps with corrected selectors
     issues_found: list[str] = []
     selector_fixes: list[str] = []          # Human-readable fix descriptions
     confidence: float = 1.0

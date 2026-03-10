@@ -18,6 +18,12 @@ class TestSuite(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     app_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Authentication (optional – for crawling login-protected sites)
+    login_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    login_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    login_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

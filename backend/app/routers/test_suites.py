@@ -17,6 +17,14 @@ from app.schemas.test_suite import (
 router = APIRouter(prefix="/test-suites", tags=["Test Suites"])
 
 
+def _suite_response_dict(suite: TestSuite) -> dict:
+    """Build response dict from a TestSuite, excluding login_password."""
+    d = {c.name: getattr(suite, c.name) for c in suite.__table__.columns}
+    d.pop("login_password", None)
+    d["has_auth"] = bool(suite.login_url and suite.login_username)
+    return d
+
+
 @router.post("", response_model=TestSuiteResponse, status_code=status.HTTP_201_CREATED)
 async def create_test_suite(
     request: CreateTestSuiteRequest,
@@ -27,7 +35,7 @@ async def create_test_suite(
     await db.flush()
     await db.refresh(suite)
     return TestSuiteResponse(
-        **{c.name: getattr(suite, c.name) for c in suite.__table__.columns},
+        **_suite_response_dict(suite),
         test_case_count=0,
     )
 
@@ -48,7 +56,7 @@ async def list_test_suites(
     results = await db.execute(stmt)
     return [
         TestSuiteResponse(
-            **{c.name: getattr(suite, c.name) for c in suite.__table__.columns},
+            **_suite_response_dict(suite),
             test_case_count=count,
         )
         for suite, count in results.all()
@@ -70,7 +78,7 @@ async def get_test_suite(
     if not suite:
         raise HTTPException(status_code=404, detail="Test suite not found")
     return TestSuiteDetailResponse(
-        **{c.name: getattr(suite, c.name) for c in suite.__table__.columns},
+        **_suite_response_dict(suite),
         test_case_count=len(suite.test_cases),
         test_cases=suite.test_cases,
     )
@@ -101,7 +109,7 @@ async def update_test_suite(
     case_count = count_result.scalar() or 0
 
     return TestSuiteResponse(
-        **{c.name: getattr(suite, c.name) for c in suite.__table__.columns},
+        **_suite_response_dict(suite),
         test_case_count=case_count,
     )
 
