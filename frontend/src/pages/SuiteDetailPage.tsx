@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Plus, FileCheck2, Trash2, Sparkles, Globe, Lock, Pencil, ShieldOff } from 'lucide-react'
+import { Plus, FileCheck2, Trash2, Sparkles, Globe, Lock, Pencil, ShieldOff, Radar } from 'lucide-react'
 import { Card, CardContent } from '../components/ui/Card'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Button } from '../components/ui/Button'
@@ -9,8 +9,10 @@ import { Input, Textarea, Select } from '../components/ui/FormFields'
 import { CaseStatusBadge } from '../components/ui/StatusBadge'
 import { Badge } from '../components/ui/Badge'
 import { EmptyState, PageLoader, PageError } from '../components/ui/EmptyState'
-import { suiteApi, caseApi } from '../services/api'
-import type { TestSuiteDetail, CreateTestCaseRequest, UpdateTestSuiteRequest, TestType } from '../types'
+import { suiteApi, caseApi, crawlApi } from '../services/api'
+import { useCrawlSocket } from '../hooks/useCrawlSocket'
+import { CrawlRunner } from '../components/crawler/CrawlRunner'
+import type { TestSuiteDetail, CreateTestCaseRequest, UpdateTestSuiteRequest, TestType, CrawlManifest } from '../types'
 import { formatDistanceToNow } from 'date-fns'
 
 const testTypes: { value: TestType; label: string }[] = [
@@ -36,6 +38,12 @@ export function SuiteDetailPage() {
     test_type: 'functional',
   })
 
+  // Crawl state
+  const [showCrawl, setShowCrawl] = useState(false)
+  const [crawlStarting, setCrawlStarting] = useState(false)
+  const [existingCrawl, setExistingCrawl] = useState<CrawlManifest | null>(null)
+  const crawl = useCrawlSocket(suiteId ?? null)
+
   // Auth editing state
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [savingAuth, setSavingAuth] = useState(false)
@@ -56,6 +64,29 @@ export function SuiteDetailPage() {
   }
 
   useEffect(() => { loadSuite() }, [suiteId])
+
+  useEffect(() => {
+    if (!suiteId) return
+    crawlApi.results(suiteId)
+      .then(data => setExistingCrawl(data))
+      .catch(() => setExistingCrawl(null))
+  }, [suiteId])
+
+  const handleAutoGen = async () => {
+    if (!suiteId) return
+    crawl.reset()
+    // Connect to WebSocket FIRST so we don't miss early events
+    crawl.connect()
+    setCrawlStarting(true)
+    setShowCrawl(true)
+    try {
+      await crawlApi.trigger(suiteId)
+    } catch {
+      // 409 = already running, WS is already connected so events will still arrive
+    } finally {
+      setCrawlStarting(false)
+    }
+  }
 
   const handleCreateCase = async () => {
     if (!suiteId || !form.title.trim() || !form.description.trim()) return
@@ -147,12 +178,50 @@ export function SuiteDetailPage() {
           { label: suite.name },
         ]}
         actions={
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="w-4 h-4" />
-            Add Test Case
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={handleAutoGen} loading={crawlStarting}>
+              <Radar className="w-4 h-4" />
+              Auto-Gen
+            </Button>
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="w-4 h-4" />
+              Add Test Case
+            </Button>
+          </div>
         }
       />
+
+      {/* Crawl Runner (live or existing) */}
+      {showCrawl && suite && (
+        <div className="mb-6">
+          <CrawlRunner
+            suiteId={suiteId!}
+            suiteName={suite.name}
+            baseUrl={suite.base_url}
+            pages={crawl.pages}
+            status={crawl.status}
+            connected={crawl.connected}
+            latestScreenshot={crawl.latestScreenshot}
+            summary={crawl.summary}
+            errorMsg={crawl.errorMsg}
+            onDismiss={() => { setShowCrawl(false); crawl.disconnect() }}
+          />
+        </div>
+      )}
+
+      {/* Existing crawl banner (when CrawlRunner is hidden) */}
+      {!showCrawl && existingCrawl && (
+        <button
+          onClick={() => setShowCrawl(true)}
+          className="w-full mb-4 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary-500/10 border border-primary-500/20 text-sm text-primary-400 hover:bg-primary-500/15 transition-colors cursor-pointer"
+        >
+          <Radar className="w-4 h-4" />
+          <span>
+            Auto-Gen data available — {existingCrawl.total_pages} pages · {existingCrawl.total_elements} elements
+          </span>
+          <span className="ml-auto text-xs text-primary-500/60">View results →</span>
+        </button>
+      )}
 
       {/* Suite Info */}
       <Card className="mb-6">

@@ -147,6 +147,60 @@ export interface TestCode {
   code_content: string
 }
 
+// ─── Site Crawl ───
+export interface CrawlPageResult {
+  index: number
+  url: string
+  page_title: string | null
+  element_count: number
+  form_count: number
+  file: string
+}
+
+export interface CrawlManifest {
+  suite_id: string
+  base_url: string
+  crawled_at: string
+  total_pages: number
+  total_elements: number
+  pages: CrawlPageResult[]
+}
+
+export interface CrawlStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed'
+  total_pages?: number
+  total_elements?: number
+  crawled_at?: string
+  error: string | null
+}
+
+export interface WsCrawlPage {
+  event: 'crawl_page'
+  url: string
+  page_title: string | null
+  element_count: number
+  form_count: number
+  screenshot_base64: string | null
+  pages_done: number
+  pages_total: number
+  timestamp?: string
+}
+
+export interface WsCrawlComplete {
+  event: 'crawl_complete'
+  total_pages: number
+  total_elements: number
+  timestamp?: string
+}
+
+export interface WsCrawlError {
+  event: 'crawl_error'
+  error: string
+  timestamp?: string
+}
+
+export type WsCrawlMessage = WsCrawlPage | WsCrawlComplete | WsCrawlError
+
 // ─── WebSocket Events ───
 export interface WsStatusChange {
   event: 'status_change'

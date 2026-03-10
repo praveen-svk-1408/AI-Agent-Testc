@@ -72,6 +72,7 @@ async def generate_test_case_steps(
             login_url=suite.login_url,
             login_username=suite.login_username,
             login_password=suite.login_password,
+            suite_id=str(suite.id),
             progress_callback=progress_callback,
         )
 

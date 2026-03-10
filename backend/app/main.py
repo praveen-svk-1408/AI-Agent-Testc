@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
-from app.routers import test_suites, test_cases, test_runs, generation
+from app.routers import test_suites, test_cases, test_runs, generation, site_crawl
 from app.services.ws_manager import manager as ws_manager
 
 settings = get_settings()
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(test_cases.router)
     app.include_router(test_runs.router)
     app.include_router(generation.router)
+    app.include_router(site_crawl.router)
 
     # WebSocket endpoint for live test run updates
     @app.websocket("/ws/test-runs/{run_id}")
@@ -42,6 +43,16 @@ def create_app() -> FastAPI:
                 await websocket.receive_text()
         except WebSocketDisconnect:
             ws_manager.disconnect(run_id, websocket)
+
+    # WebSocket endpoint for live site crawl progress
+    @app.websocket("/ws/crawl/{suite_id}")
+    async def crawl_websocket(websocket: WebSocket, suite_id: str):
+        await ws_manager.connect(suite_id, websocket)
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            ws_manager.disconnect(suite_id, websocket)
 
     # Serve artifact files as static content
     artifacts_dir = os.path.abspath(settings.artifacts_dir)

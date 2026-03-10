@@ -13,6 +13,8 @@ import type {
   CreateTestRunRequest,
   GenerationStatus,
   TestCode,
+  CrawlStatus,
+  CrawlManifest,
 } from '../types'
 
 const api = axios.create({
@@ -69,4 +71,16 @@ export const runApi = {
   delete: (runId: string) => api.delete(`/test-runs/${runId}`),
   downloadArtifact: (runId: string, artifactId: string) =>
     `/api/test-runs/${runId}/artifacts/${artifactId}/download`,
+}
+
+// ─── Site Crawl ───
+export const crawlApi = {
+  trigger: (suiteId: string) =>
+    api.post<{ status: string; suite_id: string }>(`/test-suites/${suiteId}/crawl`).then(r => r.data),
+  status: (suiteId: string) =>
+    api.get<CrawlStatus>(`/test-suites/${suiteId}/crawl/status`).then(r => r.data),
+  results: (suiteId: string) =>
+    api.get<CrawlManifest>(`/test-suites/${suiteId}/crawl/results`).then(r => r.data),
+  page: (suiteId: string, pageIndex: number) =>
+    api.get(`/test-suites/${suiteId}/crawl/pages/${pageIndex}`).then(r => r.data),
 }

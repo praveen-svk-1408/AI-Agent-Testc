@@ -27,6 +27,7 @@ from app.agents.test_generator import generate_test_cases
 from app.agents.step_generator import generate_steps, StepGeneratorOutput
 from app.agents.reverifier import review_steps
 from app.services.crawler import crawl_pages
+from app.services.site_crawl import load_crawl_snapshots
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,9 @@ class WorkflowState(TypedDict):
     login_url: str | None
     login_username: str | None
     login_password: str | None
+
+    # Suite ID for loading pre-crawled snapshots
+    suite_id: str | None
 
     # After Orchestrator
     intent: StructuredTestIntent | None
@@ -121,28 +125,57 @@ async def orchestrator_node(state: WorkflowState) -> dict:
         }
 
 
-# ── Node: 2 – Page Crawler ───────────────────────────────────────────
+# ── Node: 2 – Snapshot Loader (replaces Page Crawler) ───────────────
 
-async def crawl_node(state: WorkflowState) -> dict:
-    """Crawl target pages to extract DOM context."""
-    logger.info("Workflow node: page_crawler")
-    intent = state["intent"]
+async def load_snapshots_node(state: WorkflowState) -> dict:
+    """Load pre-crawled page snapshots from disk.
+
+    If cached crawl data exists for this suite, it is loaded directly from the
+    stored JSON files (fast, no browser launch).  Falls back to a live on-demand
+    crawl of the pages listed in the orchestrator intent if no cached data exists.
+    """
+    logger.info("Workflow node: load_snapshots")
+    suite_id = state.get("suite_id")
+    intent = state.get("intent")
+
+    # ── Try loading from pre-crawled cache first ──
+    if suite_id:
+        try:
+            cached = await load_crawl_snapshots(suite_id)
+            if cached:
+                total_elements = sum(len(s.elements) for s in cached)
+                logger.info(
+                    "load_snapshots_node: loaded %d pre-crawled snapshots (%d elements) for suite %s",
+                    len(cached), total_elements, suite_id,
+                )
+                return {
+                    "page_snapshots": cached,
+                    "status": "running",
+                    "progress_messages": _add_progress(
+                        state,
+                        f"Snapshots: loaded {len(cached)} pre-crawled pages, "
+                        f"{total_elements} interactive elements (from Auto-Gen cache)"
+                    ),
+                }
+        except Exception as e:
+            logger.warning("load_snapshots_node: cache load failed (%s), falling back to live crawl", e)
+
+    # ── Fallback: live crawl of pages from orchestrator intent ──
     if not intent:
         return {
             "status": "failed",
-            "error": "No intent available for crawling",
-            "progress_messages": _add_progress(state, "Error: No intent for crawling"),
+            "error": "No intent available and no cached snapshots — cannot determine pages to crawl",
+            "progress_messages": _add_progress(state, "Error: No snapshots or intent for crawling"),
         }
 
     pages_to_crawl = intent.pages if intent.pages else ["/"]
-
     login_url = state.get("login_url")
     login_username = state.get("login_username")
     login_password = state.get("login_password")
 
     logger.info(
-        "crawl_node: base_url=%s, pages=%s, login_url=%s, login_username=%s, has_password=%s",
-        state["base_url"], pages_to_crawl, login_url, login_username, bool(login_password),
+        "load_snapshots_node: falling back to live crawl — base_url=%s, pages=%s",
+        state["base_url"], pages_to_crawl,
     )
 
     try:
@@ -159,11 +192,12 @@ async def crawl_node(state: WorkflowState) -> dict:
             "status": "running",
             "progress_messages": _add_progress(
                 state,
-                f"Crawler: crawled {len(snapshots)} pages, {total_elements} interactive elements"
+                f"Crawler: crawled {len(snapshots)} pages on-demand, "
+                f"{total_elements} interactive elements (tip: run Auto-Gen to cache pages)"
             ),
         }
     except Exception as e:
-        logger.error("Page crawling failed: %s", str(e))
+        logger.error("Fallback crawl failed: %s", str(e))
         return {
             "status": "failed",
             "error": f"Page crawling failed: {str(e)}",
@@ -372,16 +406,16 @@ def build_workflow() -> StateGraph:
 
     # Add nodes
     workflow.add_node("orchestrator", orchestrator_node)
-    workflow.add_node("crawl", crawl_node)
+    workflow.add_node("load_snapshots", load_snapshots_node)
     workflow.add_node("step_generator", step_generator_node)
     workflow.add_node("step_reviewer", step_reviewer_node)
     workflow.add_node("accept", accept_node)
     workflow.add_node("test_generator", test_generator_node)
 
-    # Linear flow: orchestrator → crawl → step_generator → step_reviewer
+    # Linear flow: orchestrator → load_snapshots → step_generator → step_reviewer
     workflow.set_entry_point("orchestrator")
-    workflow.add_edge("orchestrator", "crawl")
-    workflow.add_edge("crawl", "step_generator")
+    workflow.add_edge("orchestrator", "load_snapshots")
+    workflow.add_edge("load_snapshots", "step_generator")
     workflow.add_edge("step_generator", "step_reviewer")
 
     # Conditional loop: step_reviewer → retry step_generator | accept | generate_tests | end
@@ -426,12 +460,16 @@ async def run_workflow(
     login_url: str | None = None,
     login_username: str | None = None,
     login_password: str | None = None,
+    suite_id: str | None = None,
     progress_callback=None,
 ) -> WorkflowState:
     """
     Run the complete Plan-and-Execute pipeline with real-time progress streaming.
 
-    Pipeline: Orchestrator → Crawler → StepGenerator → StepReviewer → TestGenerator
+    Pipeline: Orchestrator → LoadSnapshots → StepGenerator → StepReviewer → TestGenerator
+
+    If suite_id is provided and the suite has been Auto-Gen crawled, pre-crawled snapshots
+    are loaded from disk (fast). Otherwise falls back to a live on-demand crawl.
 
     Returns the final workflow state with generated (and reviewed) steps.
     """
@@ -446,6 +484,7 @@ async def run_workflow(
         "login_url": login_url,
         "login_username": login_username,
         "login_password": login_password,
+        "suite_id": suite_id,
         "intent": None,
         "page_snapshots": [],
         "test_design": None,

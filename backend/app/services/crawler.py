@@ -4,14 +4,24 @@ Page Crawler using Playwright (Python).
 Crawls a target URL and extracts DOM structure, interactive elements,
 form structures, and selectors for use by the Step Generator Agent.
 
-Uses playwright.sync_api in a background thread (via asyncio.to_thread)
-to avoid Windows ProactorEventLoop conflicts with FastAPI/uvicorn.
+For single/batch page crawls (used by the AI workflow):
+  Uses playwright.sync_api in a background thread (asyncio.to_thread).
+
+For site-wide BFS crawl (used by Auto-Gen):
+  Uses playwright.async_api directly on FastAPI's event loop — avoids
+  all Windows ProactorEventLoop/SelectorEventLoop thread conflicts.
 """
 
 import asyncio
+import base64
 import logging
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
+from playwright.async_api import (
+    async_playwright,
+    TimeoutError as AsyncPWTimeoutError,
+    BrowserContext as AsyncBrowserContext,
+)
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError, BrowserContext, Browser
 
 from app.config import get_settings
@@ -123,6 +133,24 @@ EXTRACT_FORMS_JS = """
 }
 """
 
+EXTRACT_LINKS_JS = """
+(baseOrigin) => {
+    const links = new Set();
+    document.querySelectorAll('a[href]').forEach(a => {
+        try {
+            const href = a.getAttribute('href');
+            if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+            const url = new URL(href, window.location.href);
+            if (url.origin === baseOrigin) {
+                // Strip hash/query for dedup
+                links.add(url.origin + url.pathname);
+            }
+        } catch (_) {}
+    });
+    return Array.from(links);
+}
+"""
+
 
 # ---------------------------------------------------------------------------
 # Playwright crawler (runs sync API in a thread)
@@ -210,8 +238,14 @@ def _extract_page_sync(
     context: BrowserContext,
     url: str,
     timeout_ms: int,
-) -> PageSnapshot:
-    """Navigate to *url* inside the (possibly authenticated) context and extract DOM info."""
+    capture_screenshot: bool = False,
+    extract_links_origin: str | None = None,
+) -> tuple["PageSnapshot", str | None, list[str]]:
+    """Navigate to *url* inside the (possibly authenticated) context and extract DOM info.
+
+    Returns a tuple of (PageSnapshot, screenshot_base64_or_None, discovered_links).
+    discovered_links is populated only when extract_links_origin is provided.
+    """
     page = context.new_page()
 
     # Navigate – try networkidle first, fall back to domcontentloaded
@@ -222,7 +256,7 @@ def _extract_page_sync(
             page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         except PWTimeoutError:
             page.close()
-            return PageSnapshot(page_url=url, page_title=None, elements=[], forms=[])
+            return PageSnapshot(page_url=url, page_title=None, elements=[], forms=[]), None, []
 
     page_title = page.title()
 
@@ -258,14 +292,32 @@ def _extract_page_sync(
 
     elements = [PageElement(**el) for el in raw_elements]
 
+    # Capture screenshot if requested
+    screenshot_b64: str | None = None
+    if capture_screenshot:
+        try:
+            screenshot_bytes = page.screenshot(full_page=False)
+            screenshot_b64 = "data:image/png;base64," + base64.b64encode(screenshot_bytes).decode()
+        except Exception as ss_err:
+            logger.warning("Screenshot capture failed for %s: %s", url, ss_err)
+
+    # Discover same-origin links while the page is still open (avoids a second navigation)
+    discovered_links: list[str] = []
+    if extract_links_origin:
+        try:
+            discovered_links = page.evaluate(EXTRACT_LINKS_JS, extract_links_origin)
+        except Exception as lnk_err:
+            logger.warning("Link discovery failed for %s: %s", url, lnk_err)
+
     page.close()
-    return PageSnapshot(
+    snapshot = PageSnapshot(
         page_url=url,
         page_title=page_title,
         elements=elements,
         forms=raw_forms,
         raw_html=raw_html,
     )
+    return snapshot, screenshot_b64, discovered_links
 
 
 def _crawl_pages_sync(
@@ -300,7 +352,7 @@ def _crawl_pages_sync(
             snapshots: list[PageSnapshot] = []
             for url in urls:
                 try:
-                    snap = _extract_page_sync(context, url, timeout_ms)
+                    snap, _, _ = _extract_page_sync(context, url, timeout_ms)
                     snapshots.append(snap)
                     logger.info(
                         "Crawled %s: %d elements, %d forms",
@@ -384,3 +436,325 @@ async def crawl_pages(
             PageSnapshot(page_url=u, page_title=None, elements=[], forms=[])
             for u in urls
         ]
+
+
+# ---------------------------------------------------------------------------
+# Async helpers for site-wide crawl (async_playwright)
+# ---------------------------------------------------------------------------
+
+async def _perform_login_async(
+    context: AsyncBrowserContext,
+    login_url: str,
+    username: str,
+    password: str,
+    timeout_ms: int,
+) -> None:
+    """Async login helper — used inside _run_async_crawler."""
+    page = await context.new_page()
+    try:
+        await page.goto(login_url, wait_until="networkidle", timeout=timeout_ms)
+    except AsyncPWTimeoutError:
+        await page.goto(login_url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+    try:
+        await page.wait_for_load_state("networkidle", timeout=5000)
+    except AsyncPWTimeoutError:
+        pass
+    await page.wait_for_timeout(1000)
+
+    pw_locator = page.locator('input[type="password"]:visible').first
+    await pw_locator.wait_for(state="visible", timeout=10000)
+
+    username_locator = page.locator(
+        'input:visible:not([type="password"]):not([type="hidden"])'
+        ':not([type="checkbox"]):not([type="radio"])'
+        ':not([type="submit"]):not([type="button"])'
+    ).first
+
+    await username_locator.fill(username)
+    await pw_locator.fill(password)
+
+    submit_btn = page.locator('button[type="submit"]:visible, input[type="submit"]:visible').first
+    if await submit_btn.count():
+        await submit_btn.click()
+    else:
+        await pw_locator.press("Enter")
+
+    try:
+        await page.wait_for_url(
+            lambda url: url != login_url and "/login" not in url.lower(),
+            timeout=15000,
+        )
+    except AsyncPWTimeoutError:
+        logger.warning("Login redirect detection timed out — continuing anyway")
+
+    try:
+        await page.wait_for_load_state("networkidle", timeout=5000)
+    except AsyncPWTimeoutError:
+        pass
+
+    logger.info("Login complete — current URL: %s", page.url)
+    await page.close()
+
+
+async def _extract_page_async(
+    context: AsyncBrowserContext,
+    url: str,
+    timeout_ms: int,
+    capture_screenshot: bool = False,
+    extract_links_origin: str | None = None,
+) -> tuple[PageSnapshot, str | None, list[str]]:
+    """Async page extraction — used inside _run_async_crawler."""
+    page = await context.new_page()
+
+    try:
+        await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+    except AsyncPWTimeoutError:
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        except AsyncPWTimeoutError:
+            await page.close()
+            return PageSnapshot(page_url=url, page_title=None, elements=[], forms=[]), None, []
+
+    page_title = await page.title()
+
+    try:
+        await page.wait_for_load_state("networkidle", timeout=5000)
+    except AsyncPWTimeoutError:
+        pass
+
+    try:
+        await page.wait_for_function(
+            """() => {
+                const root = document.getElementById('root')
+                    || document.getElementById('app')
+                    || document.getElementById('__next');
+                return !root || root.children.length > 0;
+            }""",
+            timeout=5000,
+        )
+    except AsyncPWTimeoutError:
+        pass
+
+    await page.wait_for_timeout(2000)
+
+    raw_elements = await page.evaluate(EXTRACT_ELEMENTS_JS)
+    raw_forms = await page.evaluate(EXTRACT_FORMS_JS)
+
+    raw_html = await page.content()
+    if len(raw_html) > 50000:
+        raw_html = raw_html[:50000] + "\n<!-- truncated -->"
+
+    elements = [PageElement(**el) for el in raw_elements]
+
+    screenshot_b64: str | None = None
+    if capture_screenshot:
+        try:
+            screenshot_bytes = await page.screenshot(full_page=False)
+            screenshot_b64 = "data:image/png;base64," + base64.b64encode(screenshot_bytes).decode()
+        except Exception as ss_err:
+            logger.warning("Screenshot capture failed for %s: %s", url, ss_err)
+
+    discovered_links: list[str] = []
+    if extract_links_origin:
+        try:
+            discovered_links = await page.evaluate(EXTRACT_LINKS_JS, extract_links_origin)
+        except Exception as lnk_err:
+            logger.warning("Link discovery failed for %s: %s", url, lnk_err)
+
+    await page.close()
+    snapshot = PageSnapshot(
+        page_url=url,
+        page_title=page_title,
+        elements=elements,
+        forms=raw_forms,
+        raw_html=raw_html,
+    )
+    return snapshot, screenshot_b64, discovered_links
+
+
+def _run_async_crawler(
+    base_url: str,
+    timeout_ms: int,
+    max_pages: int,
+    login_url: str | None,
+    login_username: str | None,
+    login_password: str | None,
+    progress_callback_sync,  # sync callable(event_dict) — thread-safe
+) -> list[PageSnapshot]:
+    """
+    Run the async BFS crawler inside asyncio.run().
+
+    asyncio.run() on Windows always creates a ProactorEventLoop (regardless of
+    uvicorn's loop policy), which supports subprocess creation required by Playwright.
+    This function is meant to be called via asyncio.to_thread() from the main loop.
+    """
+    parsed_base = urlparse(base_url)
+    base_origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
+
+    async def _crawl():
+        visited: set[str] = set()
+        queue: list[str] = [base_url]
+        snapshots: list[PageSnapshot] = []
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context(
+                    viewport={"width": 1280, "height": 720},
+                    user_agent="AI-Agent-Test Crawler/1.0",
+                )
+
+                if login_url and login_username and login_password:
+                    logger.info("Site crawl: login at %s as %s", login_url, login_username)
+                    try:
+                        await _perform_login_async(
+                            context, login_url, login_username, login_password, timeout_ms
+                        )
+                    except Exception as e:
+                        logger.error("Site crawl login failed: %s — continuing unauthenticated", e)
+
+                while queue and len(snapshots) < max_pages:
+                    url = queue.pop(0)
+                    norm = url.rstrip("/")
+                    if norm in visited:
+                        continue
+                    visited.add(norm)
+
+                    logger.info("Site crawl [%d/%d]: %s", len(snapshots) + 1, max_pages, url)
+
+                    try:
+                        snap, screenshot_b64, discovered = await _extract_page_async(
+                            context, url, timeout_ms,
+                            capture_screenshot=True,
+                            extract_links_origin=base_origin,
+                        )
+                        snapshots.append(snap)
+
+                        for link in discovered:
+                            norm_link = link.rstrip("/")
+                            if norm_link not in visited and link not in queue:
+                                queue.append(link)
+
+                        if progress_callback_sync:
+                            progress_callback_sync({
+                                "event": "crawl_page",
+                                "url": url,
+                                "page_title": snap.page_title,
+                                "element_count": len(snap.elements),
+                                "form_count": len(snap.forms),
+                                "screenshot_base64": screenshot_b64,
+                                "pages_done": len(snapshots),
+                                "pages_total": min(max_pages, len(snapshots) + len(queue)),
+                            })
+
+                    except Exception as e:
+                        logger.error("Site crawl page failed for %s: %s", url, e, exc_info=True)
+                        snapshots.append(PageSnapshot(page_url=url, page_title=None, elements=[], forms=[]))
+                        if progress_callback_sync:
+                            progress_callback_sync({
+                                "event": "crawl_page",
+                                "url": url,
+                                "page_title": None,
+                                "element_count": 0,
+                                "form_count": 0,
+                                "screenshot_base64": None,
+                                "pages_done": len(snapshots),
+                                "pages_total": min(max_pages, len(snapshots) + len(queue)),
+                            })
+
+            finally:
+                await browser.close()
+
+        return snapshots
+
+    # On Windows, uvicorn sets WindowsSelectorEventLoopPolicy globally, causing
+    # asyncio.run() to also create SelectorEventLoop. Bypass by creating
+    # ProactorEventLoop directly (the only loop that supports subprocess creation).
+    import sys
+    if sys.platform == "win32":
+        loop: asyncio.AbstractEventLoop = asyncio.ProactorEventLoop()
+    else:
+        loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_crawl())
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            loop.close()
+        asyncio.set_event_loop(None)
+
+
+# ---------------------------------------------------------------------------
+# Site-wide BFS crawl — public async API
+# ---------------------------------------------------------------------------
+
+async def crawl_site(
+    base_url: str,
+    *,
+    login_url: str | None = None,
+    login_username: str | None = None,
+    login_password: str | None = None,
+    max_pages: int = 20,
+    progress_callback=None,  # async callable(event_dict) → None
+) -> list[PageSnapshot]:
+    """
+    BFS crawl from base_url. Runs Playwright in a worker thread via asyncio.to_thread so
+    that asyncio.run() inside the thread creates a ProactorEventLoop (required on Windows
+    for subprocess creation). Progress events are forwarded to the caller's event loop
+    in real-time via call_soon_threadsafe + asyncio.Queue.
+    """
+    timeout_ms = settings.crawler_timeout_ms
+    loop = asyncio.get_running_loop()
+    event_queue: asyncio.Queue[dict] = asyncio.Queue()
+
+    def _sync_callback(event: dict) -> None:
+        loop.call_soon_threadsafe(event_queue.put_nowait, event)
+
+    try:
+        crawl_task = asyncio.ensure_future(
+            asyncio.to_thread(
+                _run_async_crawler,
+                base_url,
+                timeout_ms,
+                max_pages,
+                login_url,
+                login_username,
+                login_password,
+                _sync_callback,
+            )
+        )
+
+        # Drain and forward events while the crawl runs
+        while not crawl_task.done() or not event_queue.empty():
+            try:
+                event = event_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                if crawl_task.done():
+                    break
+                await asyncio.sleep(0.05)
+                continue
+            if progress_callback:
+                await progress_callback(event)
+
+        snapshots = crawl_task.result()
+
+        total_elements = sum(len(s.elements) for s in snapshots)
+        if progress_callback:
+            await progress_callback({
+                "event": "crawl_complete",
+                "total_pages": len(snapshots),
+                "total_elements": total_elements,
+            })
+
+        return snapshots
+
+    except Exception as e:
+        logger.error("crawl_site failed: %s", e, exc_info=True)
+        error_msg = str(e) or repr(e)
+        if progress_callback:
+            await progress_callback({"event": "crawl_error", "error": error_msg})
+        return []
+
