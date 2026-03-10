@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { testSuitesAPI, testCasesAPI, executionAPI } from '../services/api';
 
 export default function Execute() {

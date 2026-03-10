@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.database import create_all_tables, engine
+from app.database import create_all_tables
 from app.routers import test_suites, test_cases, test_steps, execution, generation, health
 from app.utils.logger import logger
 

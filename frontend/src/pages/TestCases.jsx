@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { testCasesAPI, testSuitesAPI, testStepsAPI } from '../services/api';
+import { testCasesAPI, testSuitesAPI } from '../services/api';
 
 export default function TestCases() {
   const [searchParams] = useSearchParams();

@@ -43,8 +43,3 @@ def get_db():
 def create_all_tables():
     """Create all tables in the database."""
     Base.metadata.create_all(bind=engine)
-
-
-def drop_all_tables():
-    """Drop all tables from the database (WARNING: Destructive)."""
-    Base.metadata.drop_all(bind=engine)

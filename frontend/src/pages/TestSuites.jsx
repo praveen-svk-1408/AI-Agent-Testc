@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { testSuitesAPI } from '../services/api';
 
 export default function TestSuites() {

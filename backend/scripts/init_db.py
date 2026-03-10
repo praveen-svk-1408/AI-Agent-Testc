@@ -4,8 +4,6 @@ Creates database tables and seeds sample data.
 """
 
 import sys
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from app.database import Base, engine, SessionLocal
 from app.models import TestSuite, TestCase, TestStep, ActionType
 

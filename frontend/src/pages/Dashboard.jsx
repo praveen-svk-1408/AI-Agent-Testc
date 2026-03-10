@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { testSuitesAPI, testCasesAPI, healthAPI } from '../services/api';
 
 export default function Dashboard() {

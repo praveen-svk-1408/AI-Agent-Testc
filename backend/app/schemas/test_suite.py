@@ -1,5 +1,5 @@
 from __future__ import annotations
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List, TYPE_CHECKING
 from datetime import datetime
 

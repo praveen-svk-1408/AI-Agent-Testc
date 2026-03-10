@@ -1,6 +1,5 @@
 from pydantic import BaseModel
 from typing import Optional, List
-from app.schemas.test_step import TestStepResponse
 
 
 class GenerateTestsRequest(BaseModel):
