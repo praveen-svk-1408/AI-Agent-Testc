@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Globe, FolderKanban, Trash2 } from 'lucide-react'
+import { Plus, Globe, FolderKanban, Trash2, ChevronDown, ChevronRight, Lock } from 'lucide-react'
 import { Card, CardContent } from '../components/ui/Card'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Button } from '../components/ui/Button'
@@ -18,11 +18,15 @@ export function SuitesPage() {
   const [error, setError] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [showAuth, setShowAuth] = useState(false)
   const [form, setForm] = useState<CreateTestSuiteRequest>({
     name: '',
     base_url: '',
     description: '',
     app_description: '',
+    login_url: '',
+    login_username: '',
+    login_password: '',
   })
 
   const loadSuites = () => {
@@ -43,7 +47,8 @@ export function SuitesPage() {
       const suite = await suiteApi.create(form)
       setSuites(prev => [suite, ...prev])
       setShowCreate(false)
-      setForm({ name: '', base_url: '', description: '', app_description: '' })
+      setShowAuth(false)
+      setForm({ name: '', base_url: '', description: '', app_description: '', login_url: '', login_username: '', login_password: '' })
       navigate(`/suites/${suite.id}`)
     } catch (e: any) {
       setError(e.message)
@@ -114,6 +119,12 @@ export function SuitesPage() {
                 <div className="flex items-center gap-1.5 text-xs text-surface-500">
                   <Globe className="w-3 h-3" />
                   <span className="truncate">{suite.base_url}</span>
+                  {suite.has_auth && (
+                    <span className="flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded bg-primary-600/15 text-primary-400 text-[10px] font-medium">
+                      <Lock className="w-2.5 h-2.5" />
+                      Auth
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-surface-600 mt-2">
                   Updated {formatDistanceToNow(new Date(suite.updated_at), { addSuffix: true })}
@@ -157,6 +168,48 @@ export function SuitesPage() {
             value={form.app_description}
             onChange={e => setForm(prev => ({ ...prev, app_description: e.target.value }))}
           />
+
+          {/* Collapsible Authentication Section */}
+          <div className="border border-surface-700 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowAuth(!showAuth)}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-surface-300 hover:bg-surface-800/50 transition-colors cursor-pointer"
+            >
+              {showAuth ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              <Lock className="w-3.5 h-3.5" />
+              Authentication (optional)
+            </button>
+            {showAuth && (
+              <div className="px-4 pb-4 space-y-3 border-t border-surface-700">
+                <p className="text-xs text-surface-500 pt-3">
+                  Provide login credentials if the app requires authentication to access pages.
+                </p>
+                <Input
+                  id="suite-login-url"
+                  label="Login URL"
+                  placeholder="https://example.com/login"
+                  value={form.login_url}
+                  onChange={e => setForm(prev => ({ ...prev, login_url: e.target.value }))}
+                />
+                <Input
+                  id="suite-login-username"
+                  label="Username / Email"
+                  placeholder="testuser@example.com"
+                  value={form.login_username}
+                  onChange={e => setForm(prev => ({ ...prev, login_username: e.target.value }))}
+                />
+                <Input
+                  id="suite-login-password"
+                  label="Password"
+                  placeholder="••••••••"
+                  type="password"
+                  value={form.login_password}
+                  onChange={e => setForm(prev => ({ ...prev, login_password: e.target.value }))}
+                />
+              </div>
+            )}
+          </div>
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setShowCreate(false)}>Cancel</Button>
             <Button

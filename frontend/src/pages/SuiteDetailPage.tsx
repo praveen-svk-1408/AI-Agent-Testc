@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Plus, FileCheck2, Trash2, Sparkles, Globe } from 'lucide-react'
+import { Plus, FileCheck2, Trash2, Sparkles, Globe, Lock, Pencil, ShieldOff } from 'lucide-react'
 import { Card, CardContent } from '../components/ui/Card'
 import { PageHeader } from '../components/ui/PageHeader'
 import { Button } from '../components/ui/Button'
@@ -10,7 +10,7 @@ import { CaseStatusBadge } from '../components/ui/StatusBadge'
 import { Badge } from '../components/ui/Badge'
 import { EmptyState, PageLoader, PageError } from '../components/ui/EmptyState'
 import { suiteApi, caseApi } from '../services/api'
-import type { TestSuiteDetail, CreateTestCaseRequest, TestType } from '../types'
+import type { TestSuiteDetail, CreateTestCaseRequest, UpdateTestSuiteRequest, TestType } from '../types'
 import { formatDistanceToNow } from 'date-fns'
 
 const testTypes: { value: TestType; label: string }[] = [
@@ -34,6 +34,15 @@ export function SuiteDetailPage() {
     title: '',
     description: '',
     test_type: 'functional',
+  })
+
+  // Auth editing state
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [savingAuth, setSavingAuth] = useState(false)
+  const [authForm, setAuthForm] = useState<UpdateTestSuiteRequest>({
+    login_url: '',
+    login_username: '',
+    login_password: '',
   })
 
   const loadSuite = () => {
@@ -74,6 +83,55 @@ export function SuiteDetailPage() {
     }
   }
 
+  const openAuthModal = () => {
+    setAuthForm({
+      login_url: suite?.login_url || '',
+      login_username: suite?.login_username || '',
+      login_password: '',
+    })
+    setShowAuthModal(true)
+  }
+
+  const handleSaveAuth = async () => {
+    if (!suiteId) return
+    setSavingAuth(true)
+    try {
+      const payload: UpdateTestSuiteRequest = {
+        login_url: authForm.login_url,
+        login_username: authForm.login_username,
+      }
+      // Only send password if user typed a new one
+      if (authForm.login_password) {
+        payload.login_password = authForm.login_password
+      }
+      await suiteApi.update(suiteId, payload)
+      setShowAuthModal(false)
+      loadSuite()
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setSavingAuth(false)
+    }
+  }
+
+  const handleRemoveAuth = async () => {
+    if (!suiteId || !confirm('Remove authentication from this suite?')) return
+    setSavingAuth(true)
+    try {
+      await suiteApi.update(suiteId, {
+        login_url: null,
+        login_username: null,
+        login_password: null,
+      })
+      setShowAuthModal(false)
+      loadSuite()
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setSavingAuth(false)
+    }
+  }
+
   if (loading) return <PageLoader />
   if (error || !suite) return <PageError message={error || 'Suite not found'} onRetry={loadSuite} />
 
@@ -110,6 +168,31 @@ export function SuiteDetailPage() {
               {suite.base_url}
             </a>
           </div>
+          {suite.has_auth ? (
+            <div className="flex items-center gap-1.5 text-sm">
+              <Lock className="w-3.5 h-3.5 text-primary-400" />
+              <span className="text-primary-400 font-medium text-xs">Authenticated</span>
+              {suite.login_username && (
+                <span className="text-surface-500 text-xs">({suite.login_username})</span>
+              )}
+              <button
+                onClick={openAuthModal}
+                className="ml-1 p-1 rounded text-surface-500 hover:text-primary-400 hover:bg-primary-500/10 transition-colors cursor-pointer"
+                title="Edit authentication"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={openAuthModal}
+              className="flex items-center gap-1.5 text-sm text-surface-500 hover:text-primary-400 transition-colors cursor-pointer"
+              title="Add authentication"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span className="text-xs">Add Auth</span>
+            </button>
+          )}
           <div className="flex items-center gap-2 text-sm text-surface-400">
             <FileCheck2 className="w-4 h-4" />
             {cases.length} test case{cases.length !== 1 ? 's' : ''}
@@ -215,6 +298,58 @@ export function SuiteDetailPage() {
               <Sparkles className="w-4 h-4" />
               Create Test Case
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Edit Authentication Modal */}
+      <Modal open={showAuthModal} onClose={() => setShowAuthModal(false)} title="Suite Authentication" size="md">
+        <div className="space-y-4">
+          <p className="text-xs text-surface-500">
+            Provide login credentials if the app requires authentication to access pages. These are used during crawling and test generation.
+          </p>
+          <Input
+            id="auth-login-url"
+            label="Login URL"
+            placeholder="https://example.com/login"
+            value={authForm.login_url ?? ''}
+            onChange={e => setAuthForm(prev => ({ ...prev, login_url: e.target.value }))}
+          />
+          <Input
+            id="auth-login-username"
+            label="Username / Email"
+            placeholder="testuser@example.com"
+            value={authForm.login_username ?? ''}
+            onChange={e => setAuthForm(prev => ({ ...prev, login_username: e.target.value }))}
+          />
+          <Input
+            id="auth-login-password"
+            label="Password"
+            placeholder={suite?.has_auth ? '••••••••  (leave blank to keep current)' : '••••••••'}
+            type="password"
+            value={authForm.login_password ?? ''}
+            onChange={e => setAuthForm(prev => ({ ...prev, login_password: e.target.value }))}
+          />
+          <div className="flex items-center justify-between pt-2">
+            <div>
+              {suite?.has_auth && (
+                <Button variant="secondary" onClick={handleRemoveAuth} loading={savingAuth}>
+                  <ShieldOff className="w-4 h-4" />
+                  Remove Auth
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <Button variant="secondary" onClick={() => setShowAuthModal(false)}>Cancel</Button>
+              <Button
+                onClick={handleSaveAuth}
+                loading={savingAuth}
+                disabled={!authForm.login_url?.trim() || !authForm.login_username?.trim()}
+              >
+                <Lock className="w-4 h-4" />
+                Save Authentication
+              </Button>
+            </div>
           </div>
         </div>
       </Modal>

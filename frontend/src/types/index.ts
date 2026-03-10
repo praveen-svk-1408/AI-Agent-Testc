@@ -5,6 +5,9 @@ export interface TestSuite {
   description: string | null
   base_url: string
   app_description: string | null
+  login_url: string | null
+  login_username: string | null
+  has_auth: boolean
   created_at: string
   updated_at: string
 }
@@ -18,6 +21,9 @@ export interface CreateTestSuiteRequest {
   description?: string
   base_url: string
   app_description?: string
+  login_url?: string
+  login_username?: string
+  login_password?: string
 }
 
 export interface UpdateTestSuiteRequest {
@@ -25,6 +31,9 @@ export interface UpdateTestSuiteRequest {
   description?: string
   base_url?: string
   app_description?: string
+  login_url?: string | null
+  login_username?: string | null
+  login_password?: string | null
 }
 
 // ─── Test Case ───
