@@ -130,11 +130,24 @@ async def execute_test_run(run_id: uuid.UUID):
                 if step_result.status == "failed" and step_result.error_message:
                     msg += f"\n  Error: {step_result.error_message[:200]}"
 
-                await ws_manager.broadcast(run_id_str, {
+                event_data: dict = {
                     "event": "test_step",
                     "step": msg,
+                    "status": step_result.status,
+                    "order": step_result.order,
+                    "action": step_result.action,
+                    "duration_ms": step_result.duration_ms,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
+                }
+
+                # Include live screenshot as base64 data URI
+                screenshot_b64 = getattr(step_result, "screenshot_base64", None)
+                if screenshot_b64:
+                    event_data["screenshot_base64"] = (
+                        f"data:image/png;base64,{screenshot_b64}"
+                    )
+
+                await ws_manager.broadcast(run_id_str, event_data)
 
             # --- Execute via step executor ---
             exec_result = await execute_steps(

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class CreateTestRunRequest(BaseModel):
     case_id: uuid.UUID
     browser: str = Field(default="chromium", pattern="^(chromium|firefox|webkit)$")
-    headed: bool = True
+    headed: bool = False
 
 
 # --- Response Schemas ---

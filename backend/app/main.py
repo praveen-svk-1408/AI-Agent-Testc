@@ -52,6 +52,18 @@ def create_app() -> FastAPI:
         name="artifacts",
     )
 
+    @app.get("/api/settings")
+    async def get_app_settings():
+        return {
+            "ollama_model": settings.ollama_model,
+            "llm_temperature": settings.llm_temperature,
+            "ollama_base_url": settings.ollama_base_url,
+            "step_timeout_ms": settings.step_timeout_ms,
+            "navigation_timeout_ms": settings.navigation_timeout_ms,
+            "execution_timeout_s": settings.execution_timeout_s,
+            "max_reverification_attempts": settings.max_reverification_attempts,
+        }
+
     @app.get("/health")
     async def health_check():
         return {"status": "healthy", "version": "0.1.0"}

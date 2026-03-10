@@ -14,6 +14,19 @@ class CreateTestCaseRequest(BaseModel):
     test_type: str = Field(default="functional", pattern="^(functional|e2e|integration|accessibility|visual|performance)$")
 
 
+class UpdateTestStepRequest(BaseModel):
+    order: int
+    action: str = Field(..., min_length=1)
+    selector: str | None = None
+    value: str | None = None
+    expected_result: str | None = None
+    description: str | None = None
+
+
+class UpdateTestStepsRequest(BaseModel):
+    steps: list[UpdateTestStepRequest]
+
+
 # --- Response Schemas ---
 
 class TestStepResponse(BaseModel):

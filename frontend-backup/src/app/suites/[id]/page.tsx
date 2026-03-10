@@ -124,6 +124,9 @@ export default function SuiteDetailPage() {
                     {tc.title}
                   </Link>
                   <StatusBadge status={tc.status} type="case" />
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium capitalize text-gray-600">
+                    {tc.test_type}
+                  </span>
                 </div>
                 <p className="mt-1 truncate text-sm text-gray-500">{tc.description}</p>
               </div>

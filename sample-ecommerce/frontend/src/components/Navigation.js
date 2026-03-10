@@ -14,7 +14,7 @@ function Navigation({ user, onLogout, cartCount }) {
     <nav className="navbar">
       <div className="navbar-container">
         <Link to="/" className="navbar-logo" id="logo">
-          🛒 TechStore
+        TechStore
         </Link>
 
         <div className="navbar-menu">

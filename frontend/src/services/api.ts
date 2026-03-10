@@ -1,129 +1,72 @@
-import { API_BASE_URL } from "@/lib/constants";
+import axios from 'axios'
 import type {
   TestSuite,
   TestSuiteDetail,
+  CreateTestSuiteRequest,
+  UpdateTestSuiteRequest,
   TestCase,
   TestCaseDetail,
+  CreateTestCaseRequest,
+  UpdateTestStepRequest,
   TestRun,
   TestRunDetail,
-  CreateTestSuiteRequest,
-  CreateTestCaseRequest,
   CreateTestRunRequest,
-} from "@/types";
+  GenerationStatus,
+  TestCode,
+} from '../types'
 
-async function request<T>(
-  path: string,
-  options?: RequestInit
-): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
-  });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `Request failed: ${res.status}`);
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json();
+const api = axios.create({
+  baseURL: '/api',
+})
+
+// ─── Test Suites ───
+export const suiteApi = {
+  list: () => api.get<TestSuite[]>('/test-suites').then(r => r.data),
+  get: (id: string) => api.get<TestSuiteDetail>(`/test-suites/${id}`).then(r => r.data),
+  create: (data: CreateTestSuiteRequest) => api.post<TestSuite>('/test-suites', data).then(r => r.data),
+  update: (id: string, data: UpdateTestSuiteRequest) => api.patch<TestSuite>(`/test-suites/${id}`, data).then(r => r.data),
+  delete: (id: string) => api.delete(`/test-suites/${id}`),
 }
 
-// Test Suites
-export async function getTestSuites(): Promise<TestSuite[]> {
-  return request<TestSuite[]>("/test-suites");
+// ─── Test Cases ───
+export const caseApi = {
+  listBySuite: (suiteId: string) => api.get<TestCase[]>(`/test-suites/${suiteId}/test-cases`).then(r => r.data),
+  get: (caseId: string) => api.get<TestCaseDetail>(`/test-cases/${caseId}`).then(r => r.data),
+  create: (suiteId: string, data: CreateTestCaseRequest) =>
+    api.post<TestCase>(`/test-suites/${suiteId}/test-cases`, data).then(r => r.data),
+  delete: (caseId: string) => api.delete(`/test-cases/${caseId}`),
+  updateSteps: (caseId: string, steps: UpdateTestStepRequest[]) =>
+    api.put<TestCaseDetail>(`/test-cases/${caseId}/steps`, { steps }).then(r => r.data),
 }
 
-export async function getTestSuite(id: string): Promise<TestSuiteDetail> {
-  return request<TestSuiteDetail>(`/test-suites/${id}`);
+// ─── Generation ───
+export const generationApi = {
+  trigger: (caseId: string) => api.post(`/test-cases/${caseId}/generate`).then(r => r.data),
+  status: (caseId: string) => api.get<GenerationStatus>(`/test-cases/${caseId}/generate/status`).then(r => r.data),
+  getCode: (caseId: string) => api.get<TestCode>(`/test-cases/${caseId}/code`).then(r => r.data),
+  regenerateCode: (caseId: string) => api.post(`/test-cases/${caseId}/code/generate`).then(r => r.data),
 }
 
-export async function createTestSuite(
-  data: CreateTestSuiteRequest
-): Promise<TestSuite> {
-  return request<TestSuite>("/test-suites", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
+// ─── Settings ───
+export const settingsApi = {
+  get: () => api.get<{
+    ollama_model: string
+    llm_temperature: number
+    ollama_base_url: string
+    step_timeout_ms: number
+    navigation_timeout_ms: number
+    execution_timeout_s: number
+    max_reverification_attempts: number
+  }>('/settings').then(r => r.data),
 }
 
-export async function updateTestSuite(
-  id: string,
-  data: Partial<CreateTestSuiteRequest>
-): Promise<TestSuite> {
-  return request<TestSuite>(`/test-suites/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
-}
-
-export async function deleteTestSuite(id: string): Promise<void> {
-  return request<void>(`/test-suites/${id}`, { method: "DELETE" });
-}
-
-// Test Cases
-export async function getTestCases(suiteId: string): Promise<TestCase[]> {
-  return request<TestCase[]>(`/test-suites/${suiteId}/test-cases`);
-}
-
-export async function getTestCase(caseId: string): Promise<TestCaseDetail> {
-  return request<TestCaseDetail>(`/test-cases/${caseId}`);
-}
-
-export async function createTestCase(
-  suiteId: string,
-  data: CreateTestCaseRequest
-): Promise<TestCase> {
-  return request<TestCase>(`/test-suites/${suiteId}/test-cases`, {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-}
-
-export async function deleteTestCase(caseId: string): Promise<void> {
-  return request<void>(`/test-cases/${caseId}`, { method: "DELETE" });
-}
-
-// Generation
-export async function triggerGeneration(
-  caseId: string
-): Promise<{ message: string; case_id: string; status: string; attempt: number }> {
-  return request(`/test-cases/${caseId}/generate`, { method: "POST" });
-}
-
-export async function getGenerationStatus(
-  caseId: string
-): Promise<{
-  case_id: string;
-  case_status: string;
-  generation: {
-    status: string;
-    progress: string[];
-    error: string | null;
-    steps_count?: number;
-  } | null;
-}> {
-  return request(`/test-cases/${caseId}/generate/status`);
-}
-
-// Test Runs
-export async function getTestRuns(caseId?: string): Promise<TestRun[]> {
-  const params = caseId ? `?case_id=${caseId}` : "";
-  return request<TestRun[]>(`/test-runs${params}`);
-}
-
-export async function getTestRun(runId: string): Promise<TestRunDetail> {
-  return request<TestRunDetail>(`/test-runs/${runId}`);
-}
-
-export async function createTestRun(
-  data: CreateTestRunRequest
-): Promise<TestRun> {
-  return request<TestRun>("/test-runs", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-}
-
-// Artifacts
-export function getArtifactDownloadUrl(runId: string, artifactId: string): string {
-  return `${API_BASE_URL}/test-runs/${runId}/artifacts/${artifactId}/download`;
+// ─── Test Runs ───
+export const runApi = {
+  list: (params?: { case_id?: string; status_filter?: string }) =>
+    api.get<TestRun[]>('/test-runs', { params }).then(r => r.data),
+  get: (runId: string) => api.get<TestRunDetail>(`/test-runs/${runId}`).then(r => r.data),
+  create: (data: CreateTestRunRequest) => api.post<TestRun>('/test-runs', data).then(r => r.data),
+  delete: (runId: string) => api.delete(`/test-runs/${runId}`),
+  downloadArtifact: (runId: string, artifactId: string) =>
+    `/api/test-runs/${runId}/artifacts/${artifactId}/download`,
 }

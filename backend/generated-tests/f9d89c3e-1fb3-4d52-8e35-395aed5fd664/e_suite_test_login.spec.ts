@@ -11,11 +11,11 @@ test.describe('E-suite', () => {
 
     await page.locator('#login-button').click();
 
-    await page.waitForURL('/products');
+    await page.waitForURL('/');
 
     await expect(page.locator('#logo')).toBeVisible();
 
-    await expect(page.locator('text=TechStore')).toContainText('');
+    await expect(page.locator('text=Welcome to TechStore')).toContainText('');
 
     await page.screenshot({ path: 'login_success.png', fullPage: true });
 

@@ -15,12 +15,10 @@ with the sync Playwright API, and writes a JSON result to stdout.
 """
 
 import asyncio
-import functools
 import json
 import logging
 import os
 import subprocess
-import shutil
 import sys
 import textwrap
 import time
@@ -73,7 +71,12 @@ class ExecutionResult:
 # import any ``app.*`` modules — it is fully standalone.
 
 _EXECUTOR_SCRIPT = textwrap.dedent(r'''
-import json, os, sys, time
+import base64, json, os, sys, time
+
+def _report_step(sr):
+    """Write a single step result as JSON to stderr so the parent can read it live."""
+    sys.stderr.write(json.dumps(sr) + "\n")
+    sys.stderr.flush()
 
 def main():
     payload = json.loads(sys.stdin.read())
@@ -119,6 +122,7 @@ def main():
                     "status": "passed",
                     "error_message": None,
                     "screenshot_path": None,
+                    "screenshot_base64": None,
                     "duration_ms": 0,
                 }
                 try:
@@ -182,6 +186,20 @@ def main():
                         pass
 
                 sr["duration_ms"] = int((time.perf_counter() - st0) * 1000)
+
+                # Capture a live screenshot after every step for streaming
+                try:
+                    ss_path = os.path.join(artifact_dir, f"step_{step['order']}_live.png")
+                    page.screenshot(path=ss_path)
+                    with open(ss_path, "rb") as f:
+                        sr["screenshot_base64"] = base64.b64encode(f.read()).decode("ascii")
+                    if not sr["screenshot_path"]:
+                        sr["screenshot_path"] = ss_path
+                except Exception:
+                    pass
+
+                # Report to parent process in real-time via stderr
+                _report_step(sr)
                 results.append(sr)
 
         finally:
@@ -205,6 +223,10 @@ def main():
     passed  = sum(1 for r in results if r["status"] == "passed")
     failed  = sum(1 for r in results if r["status"] == "failed")
     skipped = sum(1 for r in results if r["status"] == "skipped")
+
+    # Strip base64 from final summary (already streamed via stderr)
+    for r in results:
+        r.pop("screenshot_base64", None)
 
     out = {
         "status": "passed" if failed == 0 else "failed",
@@ -247,6 +269,9 @@ async def execute_steps(
     Spawns a **separate Python subprocess** so Playwright gets a clean
     event loop — the only reliable approach on Windows.
 
+    The subprocess streams per-step JSON progress on stderr in real-time.
+    Stdout contains the final aggregate JSON result.
+
     Parameters
     ----------
     steps : list[TestStep]
@@ -260,7 +285,8 @@ async def execute_steps(
     headed : bool
         Whether to launch the browser in headed mode.
     on_step_complete : callback
-        Optional async callback invoked after each step finishes.
+        Optional async callback invoked after each step finishes (with
+        live screenshot data).
 
     Returns
     -------
@@ -293,33 +319,72 @@ async def execute_steps(
 
     python_exe = sys.executable  # same interpreter that runs the server
 
-    # Run in a thread so we don't block the event loop
-    result = await asyncio.to_thread(
-        functools.partial(
-            subprocess.run,
+    # Queue bridges the thread (stderr reader) and the async callback
+    step_queue: asyncio.Queue[dict | None] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def _run_subprocess() -> str:
+        """Runs in a thread. Puts step dicts into queue in real-time. Returns stdout."""
+        proc = subprocess.Popen(
             [python_exe, "-c", _EXECUTOR_SCRIPT],
-            input=payload,
-            capture_output=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=settings.execution_timeout_s,
         )
-    )
+        # Send payload and close stdin
+        proc.stdin.write(payload)
+        proc.stdin.close()
 
-    # Parse subprocess output
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
+        # Read stderr line by line and push step data into the queue in real-time
+        for line in proc.stderr:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+                loop.call_soon_threadsafe(step_queue.put_nowait, parsed)
+            except json.JSONDecodeError:
+                logger.debug("Non-JSON stderr line: %s", line[:200])
 
-    if stderr:
-        logger.debug("Step executor stderr:\n%s", stderr)
+        # Signal that no more steps are coming
+        loop.call_soon_threadsafe(step_queue.put_nowait, None)
+
+        proc.wait(timeout=settings.execution_timeout_s)
+        stdout = (proc.stdout.read() or "").strip()
+        return stdout
+
+    # Start the subprocess in a background thread
+    subprocess_task = loop.run_in_executor(None, _run_subprocess)
+
+    # Consume step results from the queue in real-time and fire callbacks
+    if on_step_complete:
+        while True:
+            sr_data = await step_queue.get()
+            if sr_data is None:
+                break
+            sr = StepResult(
+                order=sr_data["order"],
+                action=sr_data["action"],
+                selector=sr_data.get("selector"),
+                value=sr_data.get("value"),
+                description=sr_data.get("description"),
+                status=sr_data.get("status", "passed"),
+                error_message=sr_data.get("error_message"),
+                screenshot_path=sr_data.get("screenshot_path"),
+                duration_ms=sr_data.get("duration_ms", 0),
+            )
+            sr.screenshot_base64 = sr_data.get("screenshot_base64")
+            await on_step_complete(sr)
+
+    # Wait for the subprocess thread to finish and get stdout
+    stdout = await subprocess_task
 
     exec_result = ExecutionResult()
 
     if not stdout:
         exec_result.status = "error"
-        exec_result.error_message = (
-            f"Subprocess exited {result.returncode} with no output.\n"
-            f"stderr: {stderr[:2000]}"
-        )
+        exec_result.error_message = "Subprocess exited with no output on stdout."
         return exec_result
 
     try:
@@ -327,8 +392,7 @@ async def execute_steps(
     except json.JSONDecodeError:
         exec_result.status = "error"
         exec_result.error_message = (
-            f"Failed to parse subprocess JSON.\nstdout: {stdout[:2000]}\n"
-            f"stderr: {stderr[:2000]}"
+            f"Failed to parse subprocess JSON.\nstdout: {stdout[:2000]}"
         )
         return exec_result
 
@@ -355,10 +419,5 @@ async def execute_steps(
             screenshot_path=sr_data.get("screenshot_path"),
             duration_ms=sr_data.get("duration_ms", 0),
         ))
-
-    # Fire per-step callbacks
-    if on_step_complete:
-        for sr in exec_result.step_results:
-            await on_step_complete(sr)
 
     return exec_result

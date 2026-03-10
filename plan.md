@@ -2,13 +2,15 @@
 
 ## Executive Summary
 
-Build a multi-agent LLM-powered platform that converts natural-language test descriptions into executable Playwright + TypeScript test suites. 
+Build a multi-agent LLM-powered platform that converts natural-language test descriptions into executable Playwright test suites.
 
-**Core workflow:** User describes a test case → backend agents analyze requirements, crawl the target app, generate test steps → generate Playwright tests → user runs tests from UI with live results, screenshots, videos.
+**Core workflow:** User describes a test case → backend agents analyze requirements, crawl the target app (via Playwright MCP), generate & review test steps → execute steps directly with playwright-python → user views live results, screenshots, videos via WebSocket.
 
 **MVP scope:** Desktop browsers only (Chrome/Firefox/WebKit), single user, sequential test execution, no auth.
 
 **Architecture:** FastAPI (Python agents + orchestration) + Next.js frontend (TypeScript) + PostgreSQL + local artifact storage + WebSocket for real-time updates.
+
+**Current status:** Phases 1–5 complete. Phase 7 (test runner overhaul) in progress — replacing subprocess-based execution with direct Python Playwright and MCP-based crawling.
 
 ---
 
@@ -25,14 +27,15 @@ Build a multi-agent LLM-powered platform that converts natural-language test des
 | Parallel Execution | Sequential MVP | Simplify orchestration; parallelization in post-launch phase |
 | Multi-tenant Auth | Not in MVP | Single workspace focus; auth added later |
 | TestStep Persistence | Stored in DB | Enable inspection, editing, re-generation workflows |
-| Crawler Tool | Playwright | Aligns with test runner choice; full page interaction capability |
+| Crawler Tool | Playwright MCP | Accessibility snapshot for richer element discovery; falls back to subprocess |
+| Test Execution | playwright-python (direct) | Execute TestSteps via Python Playwright API; eliminates TypeScript/npm dependency |
 | Test Case Editing | Enabled | Users can refine generated steps post-generation |
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: Foundation (Weeks 1–2)
+### Phase 1: Foundation (Weeks 1–2) ✅ COMPLETE
 Database schema, ORM models, API scaffolding, basic agent structure.
 
 #### Steps
@@ -78,7 +81,7 @@ Database schema, ORM models, API scaffolding, basic agent structure.
 
 ---
 
-### Phase 2: Test Requirement & Step Generation Agents (Weeks 3–4)
+### Phase 2: Test Requirement & Step Generation Agents (Weeks 3–4) ✅ COMPLETE
 
 Implement core agent logic: analyze requirements, crawl the app, generate test steps.
 
@@ -143,7 +146,7 @@ Implement core agent logic: analyze requirements, crawl the app, generate test s
 
 ---
 
-### Phase 3: Test Code Generation & Playwright Integration (Weeks 5–6)
+### Phase 3: Test Code Generation & Playwright Integration (Weeks 5–6) ✅ COMPLETE
 
 Convert TestSteps into executable Playwright + TypeScript tests.
 
@@ -197,7 +200,7 @@ Convert TestSteps into executable Playwright + TypeScript tests.
 
 ---
 
-### Phase 4: Test Execution & Orchestration (Weeks 7–8)
+### Phase 4: Test Execution & Orchestration (Weeks 7–8) ✅ COMPLETE (being overhauled in Phase 7)
 
 Run tests, capture results, store artifacts.
 
@@ -254,7 +257,7 @@ Run tests, capture results, store artifacts.
 
 ---
 
-### Phase 5: Frontend UI & Integration (Weeks 9–10)
+### Phase 5: Frontend UI & Integration (Weeks 9–10) ✅ COMPLETE
 
 Next.js frontend for suite/case management, generation, and execution viewing.
 
@@ -340,6 +343,182 @@ End-to-end testing, refinement, and deployment prep.
 
 ---
 
+### Phase 7: Test Runner Overhaul — MCP Crawler + Python Playwright Execution 🔄 IN PROGRESS
+
+Fix critical frontend bug, replace subprocess-based crawler with Playwright MCP, replace npx subprocess test execution with direct playwright-python step execution.
+
+#### Background / Motivation
+
+The existing test runner (Phase 4) generates TypeScript `.spec.ts` files and executes them via `npx playwright test` subprocess. This adds complexity:
+- Requires npm/npx, `@playwright/test` package, TypeScript compilation
+- Generated per-run config files, spec file lookups, dependency installation
+- Windows asyncio + subprocess compatibility issues
+- Frontend runs page has an infinite re-render bug blocking the UI
+
+**New approach:**
+- **Crawler**: Use Playwright MCP server (`@playwright/mcp`) for accessibility-based element discovery during step generation
+- **Execution**: Execute `TestStep` objects directly using `playwright` Python async API — no TypeScript, no npm, no subprocess
+- **Code Export**: Keep code_generator.py as optional "Export to .spec.ts" feature
+
+#### Steps
+
+32. **Fix React infinite re-render bug**
+    - File: `frontend/src/app/runs/[id]/page.tsx`
+    - Bug: `refetch()` called directly in render body (not inside `useEffect`), causing infinite loop
+    - Fix: Wrap in `useEffect` with `[run?.status, events]` dependencies
+
+33. **Create Playwright MCP client wrapper**
+    - New file: `backend/app/services/mcp_browser.py`
+    - Start `@playwright/mcp` as subprocess via stdio transport
+    - Async context manager for lifecycle management
+    - Expose: `navigate(url)`, `snapshot()`, `screenshot()`, `click(ref)`, `type(ref, text)`
+    - Add `playwright_mcp_command` setting to `backend/app/config.py`
+
+34. **Update crawler to use Playwright MCP**
+    - File: `backend/app/services/crawler.py`
+    - Replace subprocess Playwright with MCP client
+    - `crawl_page(url)` → MCP `browser_navigate(url)` + `browser_snapshot()`
+    - Parse accessibility snapshot into existing `PageSnapshot` schema
+    - Extract interactive elements with semantic roles + names
+    - Fallback to current subprocess crawler if MCP unavailable
+
+35. **Create Python Playwright step executor**
+    - New file: `backend/app/services/step_executor.py`
+    - `execute_steps(steps, browser, base_url, run_id, headed) → ExecutionResult`
+    - Launch browser via `async_playwright().start()` → `browser_type.launch(headed=headed)`
+    - Browser context with: video recording, tracing, screenshot-on-failure
+    - Action mapping:
+      - `navigate` → `page.goto(step.value or base_url)`
+      - `click` → `page.locator(step.selector).click()`
+      - `type` → `page.locator(step.selector).press_sequentially(step.value)`
+      - `fill` → `page.locator(step.selector).fill(step.value)`
+      - `verify_text` → `expect(page.locator(step.selector)).to_contain_text(step.expected_result)`
+      - `verify_element` → `expect(page.locator(step.selector)).to_be_visible()`
+      - `wait` → `page.wait_for_selector(step.selector)` or `page.wait_for_load_state(step.value)`
+      - `screenshot` → `page.screenshot(path=artifact_dir/step.description.png)`
+    - Per-step try/except, screenshot on failure, continue remaining steps
+    - After all steps: stop tracing, close context (saves video), collect artifacts
+
+36. **Replace subprocess execution with step executor**
+    - File: `backend/app/services/test_execution.py`
+    - Remove: `_find_spec_file()`, `_generate_run_config()`, `_ensure_playwright_deps()`, subprocess logic
+    - New flow:
+      1. Fetch `TestStep` objects from DB (ordered by `order`)
+      2. Get suite's `base_url`
+      3. Call `step_executor.execute_steps()`
+      4. Broadcast step-by-step progress via WebSocket (each step result)
+      5. Collect artifacts (screenshots, video, trace) from execution result
+      6. Update TestRun record in DB
+    - Keep: WebSocket broadcasting, artifact collection, DB update logic
+
+37. **Auto-install Playwright browsers**
+    - On first execution attempt, auto-run `playwright install chromium firefox webkit`
+    - Similar to existing `_ensure_playwright_deps()` but for Python Playwright browsers
+
+**Completion criteria:**
+- [ ] Frontend `/runs/{id}` page loads without infinite re-render crash
+- [ ] Crawler uses MCP accessibility snapshot for element discovery
+- [ ] Test execution runs directly from TestStep objects via playwright-python
+- [ ] No TypeScript/npm/subprocess dependency for test execution
+- [ ] Screenshots, videos, and traces captured and displayed in UI
+- [ ] WebSocket broadcasts step-by-step progress during execution
+- [ ] All three browsers work (chromium, firefox, webkit)
+- [ ] Headed mode works
+- [ ] Code export (`.spec.ts`) still available as optional feature
+
+---
+
+## Agent Pipeline (Current Architecture)
+
+The platform uses a 6-agent pipeline orchestrated by LangGraph:
+
+```
+NL Test Description
+     │
+     ▼
+┌─────────────────────┐
+│  1. Requirement      │  requirement_analyzer.py
+│     Orchestrator     │  Decomposes NL → sub-goals, pages, assertions
+│     (Plan-and-       │  Output: StructuredTestIntent
+│      Execute)        │  LLM: Ollama (qwen2.5-coder:7b)
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  2. Page Crawler     │  crawler.py (→ mcp_browser.py in Phase 7)
+│     (Playwright MCP) │  Visit pages, extract DOM/accessibility snapshot
+│                      │  Output: list[PageSnapshot]
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  3. Step Generator   │  step_generator.py
+│     (ReAct)          │  Goals + DOM → executable Playwright actions
+│                      │  Actions: navigate, click, type, fill, verify_text,
+│                      │           verify_element, wait, screenshot
+│                      │  Output: list[GeneratedTestStep]
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐     ┌──── If rejected & iteration < 3 ────┐
+│  4. Step Reviewer    │     │     Feed back to Step Generator      │
+│     (Reverifier)     │─────┘     with issues_found + fixes        │
+│                      │◄──────────────────────────────────────────┘
+│                      │  Validates selectors against real DOM
+│                      │  Output: StepReviewResult (approved, fixed_steps,
+│                      │          confidence)
+└─────────┬───────────┘
+          │ (approved)
+          ▼
+┌─────────────────────┐
+│  5. Test Generator   │  test_generator.py
+│     (IEEE 829)       │  Reviewed steps → structured test case docs
+│                      │  Output: TestDesignOutput
+│                      │  (TC-ID, Title, Category, Priority, Steps, Expected)
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  6. Code Generator   │  code_generator.py  (OPTIONAL — export only)
+│     (TypeScript)     │  Reviewed steps → Playwright .spec.ts file
+│                      │  Output: GeneratedTest (file_name, code_content)
+│                      │  Fallback: template-based if LLM fails
+└─────────────────────┘
+```
+
+### Agent Files
+
+| # | Agent | File | Input | Output |
+|---|-------|------|-------|--------|
+| 1 | Requirement Orchestrator | `backend/app/agents/requirement_analyzer.py` | NL description + app context | `StructuredTestIntent` (goals, pages, assertions, edge_cases) |
+| 2 | Page Crawler | `backend/app/services/crawler.py` | base_url + page paths | `list[PageSnapshot]` (DOM, interactive elements, forms) |
+| 3 | Step Generator (ReAct) | `backend/app/agents/step_generator.py` | `StructuredTestIntent` + `PageSnapshot` list | `list[GeneratedTestStep]` (action, selector, value, expected) |
+| 4 | Step Reviewer | `backend/app/agents/reverifier.py` | Generated steps + page snapshots | `StepReviewResult` (approved, fixed_steps, confidence, issues) |
+| 5 | Test Generator (IEEE 829) | `backend/app/agents/test_generator.py` | Approved steps + intent + snapshots | `TestDesignOutput` (IEEE 829 test cases) |
+| 6 | Code Generator | `backend/app/agents/code_generator.py` | Reviewed `TestStep` list | `GeneratedTest` (file_name, code_content, imports) |
+
+### Workflow Orchestration
+
+- **File**: `backend/app/agents/workflow.py`
+- **Engine**: LangGraph `StateGraph` with typed state
+- **Flow**: Orchestrator → Crawler → StepGen → Reviewer → (loop up to 3×) → TestGen
+- **Re-verification loop**: If reviewer rejects steps, feedback is fed back to StepGen (max 3 iterations)
+- **Service layer**: `backend/app/services/test_generation.py` orchestrates the workflow + persists to DB
+
+### Key Schemas (Pydantic)
+
+| Schema | Module | Fields |
+|--------|--------|--------|
+| `StructuredTestIntent` | `schemas/agent.py` | goals, pages, preconditions, assertions, edge_cases |
+| `PageSnapshot` | `schemas/agent.py` | page_url, raw_html, structured_elements |
+| `GeneratedTestStep` | `schemas/agent.py` | order, action, selector, value, expected_result, description |
+| `StepReviewResult` | `schemas/agent.py` | approved, fixed_steps, issues_found, selector_fixes, confidence |
+| `IEEE829TestCase` | `schemas/agent.py` | tc_id, title, category, priority, test_steps, expected_results |
+| `TestDesignOutput` | `schemas/agent.py` | Wrapper for `list[IEEE829TestCase]` |
+| `GeneratedTest` | `schemas/agent.py` | file_name, code_content, imports, test_metadata |
+
+---
+
 ## Critical Files to Create/Modify
 
 ### Backend (FastAPI + Python)
@@ -349,7 +528,7 @@ backend/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                          # FastAPI app, middleware, WebSocket setup
-│   ├── config.py                         # Environment config, LLM setup
+│   ├── config.py                         # Environment config, LLM setup, MCP settings
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── test_suite.py                 # SQLAlchemy ORM: TestSuite
@@ -362,31 +541,35 @@ backend/
 │   │   ├── test_suite.py                 # Pydantic DTOs: CreateTestSuiteRequest, TestSuiteResponse
 │   │   ├── test_case.py                  # Pydantic DTOs: CreateTestCaseRequest, TestCaseResponse
 │   │   ├── test_run.py                   # Pydantic DTOs: TestRunResponse, RunStatusUpdate
-│   │   └── agent.py                      # StructuredTestIntent, PageSnapshot, TestStep schema
+│   │   └── agent.py                      # StructuredTestIntent, PageSnapshot, TestStep, IEEE829, etc.
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── test_suites.py                # Routes: POST/GET /test-suites, GET /test-suites/{id}
 │   │   ├── test_cases.py                 # Routes: POST/GET /test-suites/{id}/test-cases
 │   │   ├── test_runs.py                  # Routes: POST/GET /test-runs, GET /test-runs/{id}, WebSocket
-│   │   └── generation.py                 # Routes: POST /test-cases/{id}/generate
+│   │   └── generation.py                 # Routes: POST /test-cases/{id}/generate, GET status, code
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── test_generation.py            # Orchestrate Analyzer → Crawler → StepGen → ReVerifier
+│   │   ├── test_generation.py            # Orchestrate workflow + persist to DB
 │   │   ├── test_output.py                # Code generation and file output (.spec.ts)
+│   │   ├── test_execution.py             # Test run orchestration (calls step_executor)
+│   │   ├── step_executor.py              # NEW (Phase 7): Direct playwright-python step execution
+│   │   ├── mcp_browser.py                # NEW (Phase 7): Playwright MCP client wrapper
+│   │   ├── crawler.py                    # Page crawler (MCP-based, fallback to subprocess)
 │   │   ├── artifact_manager.py           # Artifact capture and storage
-│   │   ├── test_execution.py             # Playwright runner orchestration
-│   │   └── crawler.py                    # Page crawler utilities
+│   │   ├── playwright_config.py          # Playwright config generation (legacy, for code export)
+│   │   └── ws_manager.py                 # WebSocket connection manager
 │   ├── agents/
 │   │   ├── __init__.py
-│   │   ├── requirement_analyzer.py       # Test Requirement Analyzer Agent
-│   │   ├── step_generator.py             # Step Generator Agent
-│   │   ├── reverifier.py                 # Re-verification Agent
-│   │   ├── test_generator.py             # Test Code Generator Agent
-│   │   ├── executor.py                   # Test Execution Agent
-│   │   └── workflow.py                   # LangGraph workflow composition
+│   │   ├── requirement_analyzer.py       # Agent 1: NL → StructuredTestIntent
+│   │   ├── step_generator.py             # Agent 3: Intent + DOM → GeneratedTestSteps (ReAct)
+│   │   ├── reverifier.py                 # Agent 4: Step Reviewer / Validator (loop)
+│   │   ├── test_generator.py             # Agent 5: IEEE 829 Test Case Generator
+│   │   ├── code_generator.py             # Agent 6: Steps → TypeScript .spec.ts (optional export)
+│   │   └── workflow.py                   # LangGraph state machine (5-agent pipeline)
 │   └── utils/
 │       ├── __init__.py
-│       └── selectors.py                  # Selector extraction and validation
+│       └── output_parser.py              # Robust Pydantic LLM output parser
 ├── migrations/
 │   └── versions/
 │       ├── 001_initial_schema.py         # Alembic migration
@@ -478,39 +661,39 @@ root/
 ## Validation Checklist
 
 ### Phase 1: Foundation
-- [ ] Database migrations run cleanly with no errors
-- [ ] FastAPI server starts; health check returns HTTP 200
-- [ ] Next.js frontend dev server runs and renders a page
-- [ ] TypeScript types compile without `errors`
-- [ ] All models and schemas instantiate correctly
+- [x] Database migrations run cleanly with no errors
+- [x] FastAPI server starts; health check returns HTTP 200
+- [x] Next.js frontend dev server runs and renders a page
+- [x] TypeScript types compile without `errors`
+- [x] All models and schemas instantiate correctly
 
 ### Phase 2: Agent Development
-- [ ] Requirement Analyzer Agent produces valid `StructuredTestIntent` objects
-- [ ] Crawler successfully fetches and parses sample app (e.g., e-commerce site)
-- [ ] Step Generator produces ordered `TestStep` objects with valid action/selector pairs
-- [ ] Re-verification loop completes in ≤3 iterations for test cases
-- [ ] End-to-end test generation runs without errors; steps logged clearly
+- [x] Requirement Analyzer Agent produces valid `StructuredTestIntent` objects
+- [x] Crawler successfully fetches and parses sample app (e.g., e-commerce site)
+- [x] Step Generator produces ordered `TestStep` objects with valid action/selector pairs
+- [x] Re-verification loop completes in ≤3 iterations for test cases
+- [x] End-to-end test generation runs without errors; steps logged clearly
 
 ### Phase 3: Code Generation
-- [ ] Generated `.spec.ts` files have valid TypeScript syntax
-- [ ] Files import Playwright test utilities correctly
-- [ ] `playwright.config.ts` is generated with correct testDir, base URL, browser projects
-- [ ] `npx playwright test` can execute generated tests without syntax errors
+- [x] Generated `.spec.ts` files have valid TypeScript syntax
+- [x] Files import Playwright test utilities correctly
+- [x] `playwright.config.ts` is generated with correct testDir, base URL, browser projects
+- [x] `npx playwright test` can execute generated tests without syntax errors
 
 ### Phase 4: Test Execution
-- [ ] TestRun record creates in DB when execution triggered
-- [ ] Playwright tests execute in headless and headed modes
-- [ ] Screenshots/videos captured on failure; paths stored in DB
-- [ ] WebSocket sends at least 3 event types (status_change, test_step, artifact_ready)
-- [ ] TestRun status transitions: pending → running → passed/failed
+- [x] TestRun record creates in DB when execution triggered
+- [x] Playwright tests execute in headless and headed modes
+- [x] Screenshots/videos captured on failure; paths stored in DB
+- [x] WebSocket sends at least 3 event types (status_change, test_step, artifact_ready)
+- [x] TestRun status transitions: pending → running → passed/failed
 
 ### Phase 5: Frontend Integration
-- [ ] All pages load without JavaScript errors
-- [ ] Create suite form submits and creates DB record
-- [ ] Create test case form triggers generation; progress UI displays
-- [ ] WebSocket updates appear in real-time (no page refresh needed)
-- [ ] Test run results display screenshots/videos in gallery
-- [ ] Code preview shows generated .spec.ts with syntax highlighting
+- [x] All pages load without JavaScript errors
+- [x] Create suite form submits and creates DB record
+- [x] Create test case form triggers generation; progress UI displays
+- [x] WebSocket updates appear in real-time (no page refresh needed)
+- [x] Test run results display screenshots/videos in gallery
+- [x] Code preview shows generated .spec.ts with syntax highlighting
 
 ### Phase 6: End-to-End & Polish
 - [ ] Full pipeline test (create suite → create case → generate → run → view results)
@@ -518,6 +701,17 @@ root/
 - [ ] Documentation complete and accurate
 - [ ] No console errors or warnings in dev tools
 - [ ] Staging deployment healthy and responsive
+
+### Phase 7: Test Runner Overhaul
+- [ ] React infinite re-render bug fixed on `/runs/{id}` page
+- [ ] Playwright MCP client wrapper created and configured
+- [ ] Crawler uses MCP accessibility snapshot (with subprocess fallback)
+- [ ] Step executor directly executes TestSteps via playwright-python
+- [ ] test_execution.py uses step_executor (no npx subprocess)
+- [ ] Screenshots, videos, traces captured and visible in UI
+- [ ] WebSocket broadcasts step-by-step progress
+- [ ] All browsers work (chromium, firefox, webkit) + headed mode
+- [ ] Code export `.spec.ts` still available via API
 
 ---
 
@@ -535,18 +729,19 @@ root/
 
 | Decision | Choice | Why |
 |----------|--------|-----|
-| **LLM Model** | GPT-4 (OpenAI API) | Superior code reasoning; handles complex test logic |
+| **LLM Model** | Ollama (qwen2.5-coder:7b) | Local inference; no API costs; configurable model |
 | **LangGraph Workflow** | Sequential agents with boundaries | Easy to debug, test, monitor; clear separation of concerns |
 | **Re-verification Loop** | Structured feedback, max 3 iterations | Balance quality with UX; prevent infinite loops |
-| **Playwright Execution Env** | In-process FastAPI workers (MVP) | Simpler deployment; later scale to separate job service (Celery/RQ) |
+| **Playwright Execution** | Direct playwright-python from TestSteps | Eliminates TypeScript/npm/subprocess; steps already in DB |
+| **Page Crawling** | Playwright MCP accessibility snapshot | Richer semantic data; fallback to subprocess Playwright |
 | **Artifact Storage** | Local filesystem + DB references | Practical for MVP; S3/cloud integration in phase 2 |
 | **Agent Visibility** | Backend internal only | Clean RESTful API; debugging endpoints added if needed in future |
 | **Error Recovery Strategy** | Auto-retry with feedback loop | Improve quality without user manual rework (max 3 attempts) |
 | **TestStep Persistence** | Store in DB | Enable post-generation inspection, editing, re-use, audit trails |
-| **Crawler Technology** | Playwright (not separate HTTP parser) | Full page interaction; aligns with test executor; consistent tech |
+| **Crawler Technology** | Playwright MCP (fallback: subprocess) | Accessibility snapshot for better element discovery; semantic roles |
 | **Test Case Editing** | Enable post-generation refinement | Better UX; users can fix unstable selectors or logic errors |
 | **Real-time Updates** | WebSocket over polling/SSE | Best UX for live progress; headed browser viewing; event-driven |
-| **Testing Framework** | Playwright + TypeScript | Industry standard; robust, type-safe, supports all major browsers |
+| **Testing Framework** | playwright-python (execution) + Playwright TS (optional export) | Direct Python execution for reliability; TS export for CI/CD integration |
 
 ---
 
@@ -573,9 +768,12 @@ root/
 - Alembic (database migrations)
 - Pydantic v2 (data validation)
 - LangChain, LangGraph (agent orchestration)
+- LangChain-Ollama (local LLM integration)
 - Playwright (async, for crawling and execution)
-- OpenAI API (GPT-4)
+- MCP SDK (Playwright MCP client for crawling)
+- Ollama (local LLM — qwen2.5-coder:7b)
 - python-dotenv (config management)
+- httpx (async HTTP client)
 - pytest (testing)
 
 ### Frontend (Next.js)
@@ -655,4 +853,4 @@ root/
 
 ---
 
-**Last updated:** March 8, 2026
+**Last updated:** March 9, 2026

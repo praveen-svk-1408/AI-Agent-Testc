@@ -38,7 +38,7 @@ async def create_test_run(
 
     run = TestRun(**request.model_dump())
     db.add(run)
-    await db.flush()
+    await db.commit()
     await db.refresh(run)
 
     # Trigger test execution in background
@@ -77,6 +77,20 @@ async def get_test_run(
     if not run:
         raise HTTPException(status_code=404, detail="Test run not found")
     return run
+
+
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_test_run(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(TestRun).where(TestRun.id == run_id)
+    result = await db.execute(stmt)
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Test run not found")
+    await db.delete(run)
+    await db.commit()
 
 
 @router.get("/{run_id}/artifacts/{artifact_id}/download")
