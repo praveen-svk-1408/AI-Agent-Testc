@@ -86,6 +86,7 @@ async def generate_and_save_test_code(
         suite_name=suite.name,
         test_name=test_case.title,
         base_url=suite.base_url,
+        test_type=test_case.test_type,
     )
 
     # Write the spec file to disk
@@ -147,7 +148,32 @@ async def get_test_code(
 
     file_path = os.path.join(suite_dir, expected_name)
     if not os.path.isfile(file_path):
-        return None
+        # QA Code Generator node uses test_case.title as suite_name, producing
+        # "{safe_test}_suite.spec.ts" instead of "{safe_suite}_{safe_test}.spec.ts"
+        alt_names = [
+            f"{safe_test}_suite.spec.ts",      # qa_code_generator_node inline path
+            f"{safe_suite}_suite.spec.ts",     # suite-level fallback
+        ]
+        for alt in alt_names:
+            alt_path = os.path.join(suite_dir, alt)
+            if os.path.isfile(alt_path):
+                file_path = alt_path
+                expected_name = alt
+                break
+        else:
+            # Last resort: find any .spec.ts file whose name contains the test title
+            try:
+                spec_files = [f for f in os.listdir(suite_dir) if f.endswith(".spec.ts")]
+                # Prefer files that contain the test case name fragment
+                matching = [f for f in spec_files if safe_test[:20] in f]
+                chosen = matching[0] if matching else (spec_files[0] if spec_files else None)
+                if chosen:
+                    expected_name = chosen
+                    file_path = os.path.join(suite_dir, expected_name)
+                else:
+                    return None
+            except OSError:
+                return None
 
     with open(file_path, "r", encoding="utf-8") as f:
         code_content = f.read()

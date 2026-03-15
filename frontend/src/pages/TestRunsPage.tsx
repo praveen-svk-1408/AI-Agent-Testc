@@ -18,16 +18,24 @@ export function TestRunsPage() {
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
 
-  const loadRuns = () => {
-    setLoading(true)
+  const loadRuns = (silent = false) => {
+    if (!silent) setLoading(true)
     setError(null)
     runApi.list(statusFilter ? { status_filter: statusFilter } : undefined)
       .then(setRuns)
       .catch(e => setError(e.message))
-      .finally(() => setLoading(false))
+      .finally(() => { if (!silent) setLoading(false) })
   }
 
   useEffect(() => { loadRuns() }, [statusFilter])
+
+  // Poll every 3 s while any run is still active so the list auto-updates
+  useEffect(() => {
+    const hasActiveRuns = runs.some(r => r.status === 'running' || r.status === 'pending')
+    if (!hasActiveRuns) return
+    const id = setInterval(() => loadRuns(true), 3000)
+    return () => clearInterval(id)
+  }, [runs, statusFilter])
 
   if (loading) return <PageLoader />
   if (error) return <PageError message={error} onRetry={loadRuns} />
@@ -94,7 +102,7 @@ export function TestRunsPage() {
                     onClick={e => {
                       e.stopPropagation()
                       if (confirm('Delete this test run?')) {
-                        runApi.delete(run.id).then(loadRuns)
+                        runApi.delete(run.id).then(() => loadRuns())
                       }
                     }}
                     className="p-1.5 rounded-lg text-surface-600 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"

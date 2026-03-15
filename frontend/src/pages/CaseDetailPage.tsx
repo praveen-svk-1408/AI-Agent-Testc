@@ -76,6 +76,7 @@ export function CaseDetailPage() {
   const [genStatus, setGenStatus] = useState<GenerationStatus | null>(null)
   const [code, setCode] = useState<string | null>(null)
   const [showCode, setShowCode] = useState(false)
+  const [regeneratingCode, setRegeneratingCode] = useState(false)
   const [activeTab, setActiveTab] = useState<'steps' | 'code' | 'runner'>('steps')
   const [showRunModal, setShowRunModal] = useState(false)
   const [runBrowser, setRunBrowser] = useState('chromium')
@@ -149,6 +150,14 @@ export function CaseDetailPage() {
     }
   }, [wsStatus])
 
+  // When WS disconnects without a terminal status (e.g. page revisit after completion),
+  // reload runs from DB so the sidebar badges show the real final status
+  useEffect(() => {
+    if (!wsConnected && activeRunId && wsStatus !== 'passed' && wsStatus !== 'failed' && wsStatus !== 'error') {
+      loadRuns()
+    }
+  }, [wsConnected])
+
   const handleGenerate = async () => {
     if (!caseId) return
     setGenerating(true)
@@ -158,6 +167,19 @@ export function CaseDetailPage() {
     } catch (e: any) {
       setGenerating(false)
       setError(e.message)
+    }
+  }
+
+  const handleRegenerateCode = async () => {
+    if (!caseId) return
+    setRegeneratingCode(true)
+    try {
+      const result = await generationApi.regenerateCode(caseId)
+      setCode(result.code_content)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setRegeneratingCode(false)
     }
   }
 
@@ -237,12 +259,14 @@ export function CaseDetailPage() {
         ]}
         actions={
           <div className="flex items-center gap-2">
-            {tc.status === 'draft' || tc.status === 'failed' ? (
-              <Button onClick={handleGenerate} loading={generating}>
-                <Sparkles className="w-4 h-4" />
-                {generating ? 'Generating...' : 'AI Generate Steps'}
-              </Button>
-            ) : null}
+            <Button
+              onClick={handleGenerate}
+              loading={generating}
+              variant={tc.status === 'generated' ? 'secondary' : 'primary'}
+            >
+              <Sparkles className="w-4 h-4" />
+              {generating ? 'Generating...' : tc.status === 'generated' ? 'Re-generate Steps' : 'AI Generate Steps'}
+            </Button>
             {steps.length > 0 && (
               <Button variant="secondary" onClick={() => setShowRunModal(true)}>
                 <Play className="w-4 h-4" />
@@ -385,6 +409,27 @@ export function CaseDetailPage() {
         <Card>
           {code ? (
             <div className="relative">
+              <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-surface-800">
+                <span className="text-xs text-surface-400 font-mono">{tc.title.toLowerCase().replace(/\s+/g, '_')}_suite.spec.ts</span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => navigator.clipboard.writeText(code)}
+                  >
+                    Copy
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleRegenerateCode}
+                    loading={regeneratingCode}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Regenerate
+                  </Button>
+                </div>
+              </div>
               <pre className="p-5 text-sm text-surface-200 overflow-x-auto font-mono leading-relaxed whitespace-pre">
                 {code}
               </pre>
@@ -393,7 +438,13 @@ export function CaseDetailPage() {
             <CardContent className="text-center py-12">
               <Code2 className="w-10 h-10 text-surface-500 mx-auto mb-3" />
               <h3 className="text-base font-semibold text-surface-200 mb-1">No code generated</h3>
-              <p className="text-sm text-surface-400">Generate test steps first, then code will be auto-generated.</p>
+              <p className="text-sm text-surface-400 mb-4">Generate test steps first, then code will be auto-generated.</p>
+              {steps.length > 0 && (
+                <Button onClick={handleRegenerateCode} loading={regeneratingCode}>
+                  <Sparkles className="w-4 h-4" />
+                  Generate Code
+                </Button>
+              )}
             </CardContent>
           )}
         </Card>

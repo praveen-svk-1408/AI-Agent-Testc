@@ -119,6 +119,7 @@ export interface TestRunDetail extends TestRun {
     duration: number
   } | null
   artifacts: Artifact[]
+  base_url?: string | null
 }
 
 export interface CreateTestRunRequest {
@@ -155,6 +156,7 @@ export interface CrawlPageResult {
   element_count: number
   form_count: number
   file: string
+  screenshot_file?: string | null
 }
 
 export interface CrawlManifest {
@@ -214,6 +216,7 @@ export interface WsTestStep {
   status: 'passed' | 'failed'
   order: number
   action: string
+  value?: string | null
   duration_ms: number
   screenshot_base64?: string
   timestamp: string

@@ -33,6 +33,16 @@ export function DashboardPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Poll every 3 s while any run is still active
+  useEffect(() => {
+    const hasActiveRuns = runs.some(r => r.status === 'running' || r.status === 'pending')
+    if (!hasActiveRuns) return
+    const id = setInterval(() => {
+      runApi.list().then(setRuns).catch(() => {})
+    }, 3000)
+    return () => clearInterval(id)
+  }, [runs])
+
   if (loading) return <PageLoader />
 
   const totalCases = suites.length * 3 // approximation, will refine

@@ -91,7 +91,9 @@ export function TestRunner({
   const [isTestExpanded, setIsTestExpanded] = useState(true)
   const commandLogRef = useRef<HTMLDivElement>(null)
 
-  const isRunning = !wsStatus || wsStatus === 'running'
+  // "running" only if the WS is actually open; once it closes the status
+  // must be resolved from a terminal value (passed/failed/error) or idle.
+  const isRunning = connected && (wsStatus === null || wsStatus === 'running')
   const isPassed = wsStatus === 'passed'
   const isFailed = wsStatus === 'failed' || wsStatus === 'error'
   const isComplete = isPassed || isFailed
@@ -100,6 +102,9 @@ export function TestRunner({
   const passedCount = wsSteps.filter(s => s.status === 'passed').length
   const failedCount = wsSteps.filter(s => s.status === 'failed').length
   const totalDuration = wsSteps.reduce((sum, s) => sum + (s.duration_ms || 0), 0)
+  // Only count WS messages that represent real steps (have an order) as "completed"
+  const completedStepCount = wsSteps.filter(s => s.order != null).length
+  const remainingCount = Math.max(0, steps.length - completedStepCount)
 
   // Get the preview screenshot (pinned > hovered > last completed step)
   const activeStepOrder = pinnedStep ?? hoveredStep
@@ -500,7 +505,7 @@ export function TestRunner({
           </span>
           {wsSteps.length > 0 && (
             <span className="text-[10px] text-surface-500">
-              {passedCount} passed · {failedCount} failed · {steps.length - wsSteps.length} remaining
+              {passedCount} passed · {failedCount} failed · {remainingCount} remaining
             </span>
           )}
         </div>

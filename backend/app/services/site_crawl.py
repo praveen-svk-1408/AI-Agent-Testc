@@ -8,6 +8,7 @@ Orchestrates a site-wide BFS crawl for a TestSuite:
 - Provides load_crawl_snapshots() for the workflow to consume cached data
 """
 
+import base64
 import json
 import logging
 import os
@@ -74,6 +75,8 @@ async def crawl_suite_site(
     crawl_dir = _crawl_dir(suite_id)
     pages_crawled: list[dict] = []
     start_time = datetime.now(timezone.utc)
+    # Map url → saved screenshot filename (populated in _progress_callback)
+    _screenshot_files: dict[str, str] = {}
 
     async def _progress_callback(event: dict) -> None:
         """Broadcast event over WebSocket and persist per-page data."""
@@ -82,13 +85,29 @@ async def crawl_suite_site(
         if event_type == "crawl_page":
             url = event.get("url", "")
             filename = _safe_filename(url) + ".json"
-            # Will be written after crawl_site returns the snapshot list
+
+            # Persist screenshot to disk if provided
+            screenshot_file: str | None = None
+            screenshot_b64 = event.get("screenshot_base64")
+            if screenshot_b64:
+                try:
+                    img_data = screenshot_b64.split(",", 1)[-1] if "," in screenshot_b64 else screenshot_b64
+                    screenshot_filename = _safe_filename(url) + ".png"
+                    screenshot_path = os.path.join(crawl_dir, screenshot_filename)
+                    with open(screenshot_path, "wb") as f_img:
+                        f_img.write(base64.b64decode(img_data))
+                    screenshot_file = screenshot_filename
+                    _screenshot_files[url] = screenshot_filename
+                except Exception as ss_err:
+                    logger.warning("Failed to save screenshot for %s: %s", url, ss_err)
+
             pages_crawled.append({
                 "url": url,
                 "page_title": event.get("page_title"),
                 "element_count": event.get("element_count", 0),
                 "form_count": event.get("form_count", 0),
                 "file": filename,
+                "screenshot_file": screenshot_file,
             })
             logger.info(
                 "Site crawl page %d: %s (%d elements)",
@@ -134,6 +153,7 @@ async def crawl_suite_site(
                 "element_count": len(s.elements),
                 "form_count": len(s.forms),
                 "file": _safe_filename(s.page_url) + ".json",
+                "screenshot_file": _screenshot_files.get(s.page_url),
             }
             for i, s in enumerate(snapshots)
         ],

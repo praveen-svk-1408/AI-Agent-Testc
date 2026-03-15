@@ -606,6 +606,31 @@ def _run_async_crawler(
                 )
 
                 if login_url and login_username and login_password:
+                    # ── Snapshot login page BEFORE authenticating (form is still visible) ──
+                    logger.info("Site crawl: snapshotting login page at %s", login_url)
+                    try:
+                        login_snap, login_screenshot, _ = await _extract_page_async(
+                            context, login_url, timeout_ms,
+                            capture_screenshot=True,
+                        )
+                        snapshots.append(login_snap)
+                        # Mark login URL as visited so BFS won't revisit it
+                        visited.add(login_url.rstrip("/"))
+                        if progress_callback_sync:
+                            progress_callback_sync({
+                                "event": "crawl_page",
+                                "url": login_url,
+                                "page_title": login_snap.page_title,
+                                "element_count": len(login_snap.elements),
+                                "form_count": len(login_snap.forms),
+                                "screenshot_base64": login_screenshot,
+                                "pages_done": len(snapshots),
+                                "pages_total": min(max_pages, len(snapshots) + len(queue)),
+                            })
+                    except Exception as e:
+                        logger.error("Failed to snapshot login page %s: %s", login_url, e)
+
+                    # ── Now perform the actual login ──
                     logger.info("Site crawl: login at %s as %s", login_url, login_username)
                     try:
                         await _perform_login_async(

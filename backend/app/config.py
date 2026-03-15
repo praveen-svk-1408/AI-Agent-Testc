@@ -17,10 +17,17 @@ class Settings(BaseSettings):
     artifacts_dir: str = "./artifacts"
     generated_tests_dir: str = "./generated-tests"
 
+    # LLM provider: "ollama" or "groq"
+    llm_provider: str = "groq"
+
     # LLM / Ollama
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5-coder:7b"
     llm_temperature: float = 0.2
+
+    # Groq
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
 
     # Agent settings
     max_reverification_attempts: int = 3

@@ -9,7 +9,7 @@ Replaces the old "reverifier" — the Step Reviewer is DOM-aware.
 
 import logging
 
-from langchain_ollama import ChatOllama
+from app.utils.llm_factory import get_llm
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -26,9 +26,22 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+_TEST_TYPE_REVIEW_RULES: dict[str, str] = {
+    "functional": "Verify that every user-visible action has a corresponding assertion step. Ensure form-submit steps are followed by a verify_text or verify_element check.",
+    "e2e": "Confirm the steps form a continuous multi-page journey. Flag any missing navigate steps between distinct pages and ensure each page transition has a waitForLoadState step.",
+    "integration": "Check that API-triggering actions (form submits, button clicks) are followed by a wait step (waitForResponse or waitForSelector) and an assertion confirming the server response is reflected in the UI.",
+    "accessibility": "Ensure selectors use role-based or label-based locators (getByRole, getByLabel, getByText) rather than CSS class or XPath selectors wherever possible. Flag any click steps missing keyboard-navigation alternatives.",
+    "visual": "Confirm at least one screenshot step is present per logical test section. Verify screenshot file paths are unique and descriptive. Flag any step sequences that change layout without a following screenshot.",
+    "performance": "Flag any fixed wait/sleep steps as performance risks — replace with event-driven waits. Ensure navigation steps measure time-to-interactive rather than using arbitrary timeouts.",
+}
+
+
 SYSTEM_PROMPT = """\
 You are a meticulous QA reviewer who validates Playwright test steps against a
 LIVE DOM snapshot.  Your job is to catch and FIX problems BEFORE the test runs.
+
+Test Type: {test_type}
+Additional review rules for this test type: {test_type_rules}
 
 You receive:
  • A list of generated Playwright steps (action, selector, value, expected_result).
@@ -43,6 +56,7 @@ Review process – for EACH step:
    (e.g. filling a password field with an email address)
 4. **Ordering** – Are waits placed after navigation / page-changing actions?
 5. **Assertions** – Do verify_text / verify_element steps target real elements?
+6. **Test-type rules** – Apply the additional rules above specific to the test type.
 
 Output:
   "approved"        – true if all steps pass review (with fixes applied), false if
@@ -113,12 +127,7 @@ def _format_steps(steps: list[GeneratedTestStep]) -> str:
 
 def create_step_reviewer():
     """Create the step reviewer chain."""
-    llm = ChatOllama(
-        model=settings.ollama_model,
-        temperature=0.1,   # Low temp for precise, consistent review
-        base_url=settings.ollama_base_url,
-        num_predict=4096,
-    )
+    llm = get_llm(temperature=0.1, num_predict=4096)
 
     parser = RobustPydanticOutputParser(pydantic_model=StepReviewResult)
 
@@ -134,6 +143,7 @@ def create_step_reviewer():
 async def review_steps(
     steps: list[GeneratedTestStep],
     snapshots: list[PageSnapshot],
+    test_type: str = "functional",
 ) -> StepReviewResult:
     """
     Review generated steps against real DOM data.
@@ -144,13 +154,19 @@ async def review_steps(
 
     page_context = _format_page_context(snapshots)
     steps_text = _format_steps(steps)
+    test_type_rules = _TEST_TYPE_REVIEW_RULES.get(
+        test_type,
+        _TEST_TYPE_REVIEW_RULES["functional"],
+    )
 
-    logger.info("StepReviewer: reviewing %d steps against %d page snapshots",
-                len(steps), len(snapshots))
+    logger.info("StepReviewer: reviewing %d steps against %d page snapshots (test_type=%s)",
+                len(steps), len(snapshots), test_type)
 
     result: StepReviewResult = await chain.ainvoke({
         "page_context": page_context,
         "steps_text": steps_text,
+        "test_type": test_type,
+        "test_type_rules": test_type_rules,
         "format_instructions": parser.get_format_instructions(),
     })
 

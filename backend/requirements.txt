@@ -27,5 +27,5 @@ python-dotenv>=1.0.1
 httpx>=0.28.0,<1.0.0
 
 # LLM Providers
-langgraph
+langchain-groq>=0.2.0,<0.3.0
 

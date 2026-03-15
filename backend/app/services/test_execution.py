@@ -136,6 +136,7 @@ async def execute_test_run(run_id: uuid.UUID):
                     "status": step_result.status,
                     "order": step_result.order,
                     "action": step_result.action,
+                    "value": step_result.value,
                     "duration_ms": step_result.duration_ms,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
@@ -230,6 +231,9 @@ async def execute_test_run(run_id: uuid.UUID):
                 exec_result.total,
             )
 
+            # Signal all WebSocket handlers to close now that the run is finished
+            ws_manager.close_all(run_id_str)
+
         except Exception as e:
             tb = traceback.format_exc()
             error_msg = f"{str(e) or repr(e)}\n\n{tb}"[:5000]
@@ -270,3 +274,6 @@ async def execute_test_run(run_id: uuid.UUID):
                 "error_message": error_msg,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
+
+            # Signal all WebSocket handlers to close now that the run has errored
+            ws_manager.close_all(run_id_str)

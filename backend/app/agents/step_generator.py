@@ -10,7 +10,7 @@ Supported actions:
 
 import logging
 
-from langchain_ollama import ChatOllama
+from app.utils.llm_factory import get_llm
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, model_validator
@@ -20,6 +20,7 @@ from app.schemas.agent import (
     StructuredTestIntent,
     PageSnapshot,
     GeneratedTestStep,
+    IEEE829TestCase,
 )
 from app.utils.output_parser import RobustPydanticOutputParser
 
@@ -92,6 +93,10 @@ Rules:
     inserting waits between them.  The total should typically be under 25 steps.
 11. This is ONE test case — produce a SINGLE sequential flow, not multiple
     independent test scenarios concatenated together.
+12. IMPORTANT: Each step MUST have its "tc_id" field set to the test-case ID it
+    implements (e.g. "TC-001"). When covering multiple test cases, group all steps
+    for TC-001 first, then all steps for TC-002, etc. If no test cases are provided,
+    leave tc_id as null.
 {reviewer_feedback}
 Available page information:
 {page_context}
@@ -102,6 +107,7 @@ IMPORTANT: Respond with ONLY a valid JSON object. No markdown code fences.
 """
 
 USER_PROMPT = """\
+{test_cases_slot}
 Test Intent:
 - Goals: {goals}
 - Pages: {pages}
@@ -109,8 +115,8 @@ Test Intent:
 - Assertions: {assertions}
 - Edge Cases: {edge_cases}
 
-Generate the flat list of executable Playwright steps covering ALL goals and assertions above.
-Order steps sequentially (step 1, 2, 3 … N).
+Generate the flat list of executable Playwright steps (with tc_id set on each step).
+Order steps sequentially (step 1, 2, 3 … N) across all test cases.
 """
 
 
@@ -136,12 +142,7 @@ def _format_page_context(snapshots: list[PageSnapshot]) -> str:
 
 def create_step_generator():
     """Create the step generator chain."""
-    llm = ChatOllama(
-        model=settings.ollama_model,
-        temperature=settings.llm_temperature,
-        base_url=settings.ollama_base_url,
-        num_predict=4096,
-    )
+    llm = get_llm(num_predict=4096)
 
     parser = RobustPydanticOutputParser(pydantic_model=StepGeneratorOutput)
 
@@ -159,14 +160,18 @@ async def generate_steps(
     snapshots: list[PageSnapshot],
     feedback: str | None = None,
     test_type: str = "functional",
+    approved_test_cases: list[IEEE829TestCase] | None = None,
 ) -> StepGeneratorOutput:
     """
     Generate executable Playwright steps from structured test intent + DOM.
 
     Args:
-        intent:    Output of the Orchestrator (goals, assertions, pages).
-        snapshots: Crawled page snapshots with real DOM selectors.
-        feedback:  Optional feedback from the Step Reviewer for re-generation.
+        intent:               Output of the Orchestrator (goals, assertions, pages).
+        snapshots:            Crawled page snapshots with real DOM selectors.
+        feedback:             Optional feedback from the Step Reviewer for re-generation.
+        test_type:            Testing category for type-specific guidance.
+        approved_test_cases:  Approved IEEE 829 test cases from Test Case Reviewer.
+                              When provided, one step group per test case with tc_id set.
     """
     chain, parser = create_step_generator()
 
@@ -179,9 +184,24 @@ async def generate_steps(
             f"{feedback}\n"
         )
 
+    # Format approved test cases as primary input when available
+    test_cases_slot = ""
+    if approved_test_cases:
+        lines = ["Approved IEEE 829 Test Cases (generate steps for EACH, set tc_id on every step):"]
+        for tc in approved_test_cases:
+            lines.append(f"\n{tc.tc_id}: {tc.title} [{tc.category}/{tc.priority}]")
+            if tc.preconditions:
+                lines.append(f"  Preconditions: {'; '.join(tc.preconditions)}")
+            lines.append("  Expected steps (high-level):")
+            for i, step in enumerate(tc.test_steps, 1):
+                expected = tc.expected_results[i - 1] if i <= len(tc.expected_results) else ""
+                lines.append(f"    {i}. {step}  →  {expected}")
+        test_cases_slot = "\n".join(lines) + "\n"
+
     logger.info(
-        "StepGenerator: converting %d goals into Playwright steps (feedback=%s)",
-        len(intent.goals), bool(feedback),
+        "StepGenerator: converting %d goals into Playwright steps "
+        "(%d test cases, feedback=%s)",
+        len(intent.goals), len(approved_test_cases or []), bool(feedback),
     )
 
     result: StepGeneratorOutput = await chain.ainvoke({
@@ -193,6 +213,7 @@ async def generate_steps(
         "edge_cases": "\n".join(f"- {e}" for e in intent.edge_cases) or "None",
         "reviewer_feedback": reviewer_feedback,
         "test_type": test_type,
+        "test_cases_slot": test_cases_slot,
         "format_instructions": parser.get_format_instructions(),
     })
 

@@ -73,6 +73,7 @@ async def generate_test_case_steps(
             login_username=suite.login_username,
             login_password=suite.login_password,
             suite_id=str(suite.id),
+            suite_name=suite.name,
             progress_callback=progress_callback,
         )
 
@@ -113,11 +114,20 @@ async def generate_test_case_steps(
         logger.info("Generation complete: %d steps saved for case %s",
                     len(db_steps), case_id)
 
-        # Phase 3: Generate Playwright test code from the steps
+        # Phase 3: Use inline-generated code from QA Code Generator node, or fall back
         code_result = None
         try:
-            code_result = await generate_and_save_test_code(case_id, db)
-            logger.info("Test code generated: %s", code_result.get("file_name"))
+            inline_code = workflow_state.get("generated_code")
+            inline_file = workflow_state.get("code_file_name")
+
+            if inline_code and inline_file:
+                # Code was already written to disk by the QA Code Generator node
+                logger.info("Test code already generated inline by QACodeGenerator: %s", inline_file)
+                code_result = {"file_name": inline_file, "inline": True}
+            else:
+                # Fallback: generate code from DB steps (legacy path)
+                code_result = await generate_and_save_test_code(case_id, db)
+                logger.info("Test code generated (fallback): %s", code_result.get("file_name"))
 
             # Generate/update playwright.config.ts for this suite
             save_playwright_config(

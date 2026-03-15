@@ -8,6 +8,7 @@ import {
   Wifi,
   WifiOff,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   FileSearch,
   MousePointer,
@@ -49,6 +50,7 @@ export function CrawlRunner({
   const [pinnedIndex, setPinnedIndex] = useState<number | null>(null)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [isListExpanded, setIsListExpanded] = useState(true)
+  const [isMinimized, setIsMinimized] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
 
   const isCrawling = status === 'crawling'
@@ -134,6 +136,15 @@ export function CrawlRunner({
             {connected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
           </div>
 
+          {/* Minimize / Expand */}
+          <button
+            onClick={() => setIsMinimized(v => !v)}
+            className="p-1 rounded text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors cursor-pointer"
+            title={isMinimized ? 'Expand' : 'Minimize'}
+          >
+            {isMinimized ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+          </button>
+
           {/* Stop */}
           {isCrawling && onStop && (
             <button
@@ -159,7 +170,7 @@ export function CrawlRunner({
       </div>
 
       {/* ═══ Main Split Panel ═══ */}
-      <div className="flex" style={{ height: '420px' }}>
+      {!isMinimized && <div className="flex" style={{ height: '420px' }}>
         {/* ─── Left: Page Log ─── */}
         <div className="w-[400px] flex-shrink-0 flex flex-col border-r border-surface-800 bg-surface-900">
           {/* Collapsible header */}
@@ -332,7 +343,7 @@ export function CrawlRunner({
             )}
           </div>
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

@@ -43,6 +43,7 @@ class TestRunResponse(BaseModel):
 class TestRunDetailResponse(TestRunResponse):
     result_summary: dict | None = None
     artifacts: list[ArtifactResponse] = []
+    base_url: str | None = None
 
 
 class RunStatusUpdate(BaseModel):

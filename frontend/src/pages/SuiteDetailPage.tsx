@@ -12,6 +12,7 @@ import { EmptyState, PageLoader, PageError } from '../components/ui/EmptyState'
 import { suiteApi, caseApi, crawlApi } from '../services/api'
 import { useCrawlSocket } from '../hooks/useCrawlSocket'
 import { CrawlRunner } from '../components/crawler/CrawlRunner'
+import { CrawlResultsPanel } from '../components/crawler/CrawlResultsPanel'
 import type { TestSuiteDetail, CreateTestCaseRequest, UpdateTestSuiteRequest, TestType, CrawlManifest } from '../types'
 import { formatDistanceToNow } from 'date-fns'
 
@@ -79,6 +80,7 @@ export function SuiteDetailPage() {
     crawl.connect()
     setCrawlStarting(true)
     setShowCrawl(true)
+    setExistingCrawl(null) // hide results panel while new crawl runs
     try {
       await crawlApi.trigger(suiteId)
     } catch {
@@ -87,6 +89,19 @@ export function SuiteDetailPage() {
       setCrawlStarting(false)
     }
   }
+
+  // When crawl completes, refresh manifest so CrawlResultsPanel takes over
+  useEffect(() => {
+    if (crawl.status === 'completed' && suiteId) {
+      crawlApi.results(suiteId)
+        .then(data => {
+          setExistingCrawl(data)
+          setShowCrawl(false)
+          crawl.disconnect()
+        })
+        .catch(() => {})
+    }
+  }, [crawl.status, suiteId])
 
   const handleCreateCase = async () => {
     if (!suiteId || !form.title.trim() || !form.description.trim()) return
@@ -191,7 +206,7 @@ export function SuiteDetailPage() {
         }
       />
 
-      {/* Crawl Runner (live or existing) */}
+      {/* Crawl Runner — shown only during an active live crawl */}
       {showCrawl && suite && (
         <div className="mb-6">
           <CrawlRunner
@@ -209,18 +224,13 @@ export function SuiteDetailPage() {
         </div>
       )}
 
-      {/* Existing crawl banner (when CrawlRunner is hidden) */}
-      {!showCrawl && existingCrawl && (
-        <button
-          onClick={() => setShowCrawl(true)}
-          className="w-full mb-4 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary-500/10 border border-primary-500/20 text-sm text-primary-400 hover:bg-primary-500/15 transition-colors cursor-pointer"
-        >
-          <Radar className="w-4 h-4" />
-          <span>
-            Auto-Gen data available — {existingCrawl.total_pages} pages · {existingCrawl.total_elements} elements
-          </span>
-          <span className="ml-auto text-xs text-primary-500/60">View results →</span>
-        </button>
+      {/* Crawl Results Panel — shown when crawl data exists and no active crawl */}
+      {!showCrawl && existingCrawl && suiteId && (
+        <CrawlResultsPanel
+          suiteId={suiteId}
+          manifest={existingCrawl}
+          onRerun={handleAutoGen}
+        />
       )}
 
       {/* Suite Info */}

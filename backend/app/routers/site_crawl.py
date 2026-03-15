@@ -53,6 +53,7 @@ async def _run_crawl_background(suite_id: str) -> None:
                     "total_elements": result["total_elements"],
                     "error": None,
                 }
+                ws_manager.close_all(suite_id)
             except Exception as e:
                 await db.rollback()
                 logger.error("Crawl background task failed for suite %s: %s", suite_id, e)
@@ -63,6 +64,7 @@ async def _run_crawl_background(suite_id: str) -> None:
                 }
                 # Broadcast error to WS clients
                 await ws_manager.broadcast(suite_id, {"event": "crawl_error", "error": error_msg})
+                ws_manager.close_all(suite_id)
     except Exception as e:
         logger.error("Crawl session creation failed: %s", e)
         _crawl_progress[suite_id] = {"status": "failed", "error": str(e)}

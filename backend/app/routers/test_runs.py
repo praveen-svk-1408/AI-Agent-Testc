@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models.artifact import Artifact
 from app.models.test_run import TestRun
 from app.models.test_case import TestCase
+from app.models.test_suite import TestSuite
 from app.schemas.test_run import (
     CreateTestRunRequest,
     TestRunResponse,
@@ -76,7 +77,20 @@ async def get_test_run(
     run = result.scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="Test run not found")
-    return run
+
+    # Fetch suite base_url via case → suite
+    base_url: str | None = None
+    case_res = await db.execute(select(TestCase).where(TestCase.id == run.case_id))
+    tc = case_res.scalar_one_or_none()
+    if tc:
+        suite_res = await db.execute(select(TestSuite).where(TestSuite.id == tc.suite_id))
+        suite = suite_res.scalar_one_or_none()
+        if suite:
+            base_url = suite.base_url
+
+    resp = TestRunDetailResponse.model_validate(run)
+    resp.base_url = base_url
+    return resp
 
 
 @router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)

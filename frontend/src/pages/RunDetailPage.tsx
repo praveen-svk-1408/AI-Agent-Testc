@@ -12,6 +12,8 @@ import {
   Activity,
   AlertTriangle,
   Trash2,
+  Globe,
+  ExternalLink,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader } from '../components/ui/Card'
 import { PageHeader } from '../components/ui/PageHeader'
@@ -20,7 +22,7 @@ import { Badge } from '../components/ui/Badge'
 import { RunStatusBadge } from '../components/ui/StatusBadge'
 import { PageLoader, PageError } from '../components/ui/EmptyState'
 import { runApi } from '../services/api'
-import type { TestRunDetail, Artifact } from '../types'
+import type { TestRunDetail } from '../types'
 import { format } from 'date-fns'
 import { useTestRunSocket } from '../hooks/useTestRunSocket'
 
@@ -39,7 +41,7 @@ export function RunDetailPage() {
   const [error, setError] = useState<string | null>(null)
 
   // Connect WS for live updates if run is pending/running
-  const { steps: wsSteps, status: wsStatus } = useTestRunSocket(
+  const { steps: wsSteps, status: wsStatus, currentUrl } = useTestRunSocket(
     run?.status === 'pending' || run?.status === 'running' ? runId! : null
   )
 
@@ -66,6 +68,7 @@ export function RunDetailPage() {
 
   const summary = run.result_summary
   const artifacts = run.artifacts ?? []
+  const iframeUrl = currentUrl ?? run.base_url ?? null
 
   return (
     <div className="animate-fade-in">
@@ -165,6 +168,11 @@ export function RunDetailPage() {
         </Card>
       )}
 
+      {/* Live Browser Preview (shown while pending/running) */}
+      {(run.status === 'pending' || run.status === 'running') && iframeUrl && (
+        <LiveBrowserPreview url={iframeUrl} />
+      )}
+
       {/* Live Steps (from WebSocket) */}
       {wsSteps.length > 0 && (
         <Card className="mb-6">
@@ -223,5 +231,66 @@ export function RunDetailPage() {
         </Card>
       )}
     </div>
+  )
+}
+
+// ─── Live Browser Preview ────────────────────────────────────────────────────
+
+function LiveBrowserPreview({ url }: { url: string }) {
+  const [blocked, setBlocked] = useState(false)
+
+  // Reset blocked state whenever the URL changes
+  useEffect(() => { setBlocked(false) }, [url])
+
+  return (
+    <Card className="mb-6">
+      <CardHeader className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-surface-200 flex items-center gap-2">
+          <Globe className="w-4 h-4 text-primary-400" />
+          Live Browser Preview
+        </h3>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-primary-400 hover:underline flex items-center gap-1"
+        >
+          <ExternalLink className="w-3 h-3" />
+          Open in new tab
+        </a>
+      </CardHeader>
+      <CardContent className="p-0">
+        {/* Fake browser address bar */}
+        <div className="flex items-center gap-2 px-4 py-2 bg-surface-900 border-b border-surface-800">
+          <Globe className="w-3 h-3 text-surface-500 flex-shrink-0" />
+          <span className="text-xs font-mono text-surface-300 truncate select-all">{url}</span>
+        </div>
+        {blocked ? (
+          <div className="h-64 flex flex-col items-center justify-center gap-3 text-surface-400">
+            <AlertTriangle className="w-8 h-8 text-amber-400" />
+            <p className="text-sm text-center px-4">
+              This site blocks embedding (X-Frame-Options / CSP).
+            </p>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-primary-400 hover:underline"
+            >
+              Open in new tab →
+            </a>
+          </div>
+        ) : (
+          <iframe
+            key={url}
+            src={url}
+            title="Live Browser Preview"
+            className="w-full h-[520px] border-0 bg-white"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals"
+            onError={() => setBlocked(true)}
+          />
+        )}
+      </CardContent>
+    </Card>
   )
 }

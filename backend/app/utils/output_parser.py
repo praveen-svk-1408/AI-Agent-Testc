@@ -68,6 +68,81 @@ def clean_llm_json(text: str) -> str:
     return text
 
 
+def _describe_schema(schema: dict, defs: dict, indent: int = 0) -> str:
+    """Recursively render a JSON schema as a human-readable structure for LLM prompts."""
+    # Resolve $ref
+    if "$ref" in schema:
+        ref_name = schema["$ref"].split("/")[-1]
+        return _describe_schema(defs.get(ref_name, {}), defs, indent)
+
+    s_type = schema.get("type", "")
+
+    if s_type == "object":
+        props = schema.get("properties", {})
+        required = schema.get("required", [])
+        pad = "  " * (indent + 1)
+        close_pad = "  " * indent
+        items = []
+        for name, prop in props.items():
+            req = " (required)" if name in required else " (optional)"
+            items.append(f'{pad}"{name}": {_describe_schema(prop, defs, indent + 1)}{req}')
+        return "{\n" + ",\n".join(items) + "\n" + close_pad + "}"
+
+    if s_type == "array":
+        item_desc = _describe_schema(schema.get("items", {}), defs, indent)
+        return f"[{item_desc}, ...]"
+
+    return s_type or "any"
+
+
+def _coerce_schema_types(data: dict, schema: dict, defs: dict) -> dict:
+    """
+    Recursively coerce data values to match schema types.
+
+    Handles the common local-LLM mistake of returning a plain string where
+    the schema expects an array (list), e.g.::
+
+        "coverage_goals": "Cover the login happy path"
+        →
+        "coverage_goals": ["Cover the login happy path"]
+    """
+    if not isinstance(data, dict):
+        return data
+
+    props = schema.get("properties", {})
+
+    for key, val in list(data.items()):
+        if key not in props:
+            continue
+
+        prop = props[key]
+
+        # Resolve $ref to get the real schema
+        if "$ref" in prop:
+            ref_name = prop["$ref"].split("/")[-1]
+            ref_schema = defs.get(ref_name, {})
+            if isinstance(val, dict):
+                data[key] = _coerce_schema_types(val, {**ref_schema, "$defs": defs}, defs)
+            continue
+
+        prop_type = prop.get("type")
+
+        if prop_type == "array" and isinstance(val, str):
+            # Split on semicolons, newlines, or wrap as single item
+            if ";" in val:
+                data[key] = [item.strip() for item in val.split(";") if item.strip()]
+            elif "\n" in val:
+                data[key] = [item.strip().lstrip("-•* ").strip() for item in val.split("\n") if item.strip()]
+            else:
+                data[key] = [val] if val else []
+            logger.debug("Coerced string→list for field '%s': %s", key, data[key])
+
+        elif prop_type == "object" and isinstance(val, dict):
+            data[key] = _coerce_schema_types(val, {**prop, "$defs": defs}, defs)
+
+    return data
+
+
 class RobustPydanticOutputParser(BaseOutputParser[T]):
     """Output parser that handles messy LLM JSON output and parses into a Pydantic model."""
 
@@ -78,23 +153,13 @@ class RobustPydanticOutputParser(BaseOutputParser[T]):
 
     def get_format_instructions(self) -> str:
         schema = self.pydantic_model.model_json_schema()
-        # Simplify: just show the expected fields
-        fields_desc = []
-        props = schema.get("properties", {})
-        required = schema.get("required", [])
-        for name, prop in props.items():
-            type_str = prop.get("type", "any")
-            if "items" in prop:
-                item_type = prop["items"].get("type", "object")
-                type_str = f"array of {item_type}s"
-            req = " (required)" if name in required else " (optional)"
-            desc = prop.get("description", "")
-            fields_desc.append(f'  "{name}": {type_str}{req} - {desc}' if desc else f'  "{name}": {type_str}{req}')
-
+        defs = schema.get("$defs", {})
+        structure = _describe_schema(schema, defs)
         return (
             "You must respond with ONLY valid JSON, no additional text, no markdown code fences, no comments.\n"
-            "The JSON object must have these fields:\n"
-            "{\n" + ",\n".join(fields_desc) + "\n}"
+            "Every field typed as an array MUST be a JSON array (use [] for empty), never a plain string.\n"
+            "The JSON must match this exact structure:\n"
+            + structure
         )
 
     def parse(self, text: str) -> T:
@@ -121,5 +186,10 @@ class RobustPydanticOutputParser(BaseOutputParser[T]):
                 raise ValueError(
                     f"No JSON object found in LLM output. Cleaned text:\n{cleaned[:500]}"
                 )
+
+        # Coerce types before validation (handles string→list mismatches from local LLMs)
+        schema = self.pydantic_model.model_json_schema()
+        defs = schema.get("$defs", {})
+        data = _coerce_schema_types(data, schema, defs)
 
         return self.pydantic_model.model_validate(data)

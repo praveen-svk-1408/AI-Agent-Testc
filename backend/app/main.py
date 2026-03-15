@@ -1,4 +1,6 @@
+import asyncio
 import os
+import uuid as _uuid
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,21 +39,74 @@ def create_app() -> FastAPI:
     # WebSocket endpoint for live test run updates
     @app.websocket("/ws/test-runs/{run_id}")
     async def test_run_websocket(websocket: WebSocket, run_id: str):
-        await ws_manager.connect(run_id, websocket)
+        done_event = asyncio.Event()
+        await ws_manager.connect(run_id, websocket, done_event)
+
+        # If the run already finished before this client connected, send the
+        # current status immediately so the frontend doesn't stay stuck on "Running".
         try:
-            while True:
-                await websocket.receive_text()
-        except WebSocketDisconnect:
+            from sqlalchemy import select
+            from app.database import async_session
+            from app.models.test_run import TestRun as _TestRun
+            async with async_session() as _db:
+                _result = await _db.execute(
+                    select(_TestRun).where(_TestRun.id == _uuid.UUID(run_id))
+                )
+                _run = _result.scalar_one_or_none()
+                if _run and _run.status not in ("pending", "running"):
+                    await websocket.send_json({
+                        "event": "status_change",
+                        "status": _run.status,
+                    })
+                    done_event.set()
+        except Exception:
+            pass
+
+        async def _drain():
+            """Keep draining incoming frames until the client disconnects."""
+            try:
+                while True:
+                    await websocket.receive_text()
+            except (WebSocketDisconnect, Exception):
+                pass
+
+        recv_task = asyncio.create_task(_drain())
+        done_task = asyncio.create_task(done_event.wait())
+        try:
+            await asyncio.wait([recv_task, done_task], return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            recv_task.cancel()
+            done_task.cancel()
+            try:
+                await websocket.close()
+            except Exception:
+                pass
             ws_manager.disconnect(run_id, websocket)
 
     # WebSocket endpoint for live site crawl progress
     @app.websocket("/ws/crawl/{suite_id}")
     async def crawl_websocket(websocket: WebSocket, suite_id: str):
-        await ws_manager.connect(suite_id, websocket)
+        done_event = asyncio.Event()
+        await ws_manager.connect(suite_id, websocket, done_event)
+
+        async def _drain():
+            try:
+                while True:
+                    await websocket.receive_text()
+            except (WebSocketDisconnect, Exception):
+                pass
+
+        recv_task = asyncio.create_task(_drain())
+        done_task = asyncio.create_task(done_event.wait())
         try:
-            while True:
-                await websocket.receive_text()
-        except WebSocketDisconnect:
+            await asyncio.wait([recv_task, done_task], return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            recv_task.cancel()
+            done_task.cancel()
+            try:
+                await websocket.close()
+            except Exception:
+                pass
             ws_manager.disconnect(suite_id, websocket)
 
     # Serve artifact files as static content
