@@ -168,6 +168,15 @@ async def load_snapshots_node(state: WorkflowState) -> dict:
         try:
             cached = await load_crawl_snapshots(suite_id)
             if cached:
+                # ── MCP accessibility enrichment ──
+                from app.services.mcp_browser import enrich_snapshots_with_mcp
+                cached = await enrich_snapshots_with_mcp(
+                    cached,
+                    login_url=state.get("login_url"),
+                    login_username=state.get("login_username"),
+                    login_password=state.get("login_password"),
+                )
+
                 total_elements = sum(len(s.elements) for s in cached)
                 logger.info(
                     "load_snapshots_node: loaded %d pre-crawled snapshots (%d elements) for suite %s",
@@ -211,6 +220,16 @@ async def load_snapshots_node(state: WorkflowState) -> dict:
             login_username=login_username,
             login_password=login_password,
         )
+
+        # ── MCP accessibility enrichment ──
+        from app.services.mcp_browser import enrich_snapshots_with_mcp
+        snapshots = await enrich_snapshots_with_mcp(
+            snapshots,
+            login_url=login_url,
+            login_username=login_username,
+            login_password=login_password,
+        )
+
         total_elements = sum(len(s.elements) for s in snapshots)
         return {
             "page_snapshots": snapshots,
@@ -474,6 +493,8 @@ async def step_generator_node(state: WorkflowState) -> dict:
             feedback=feedback,
             test_type=state.get("test_type", "functional"),
             approved_test_cases=approved_cases,
+            login_username=state.get("login_username"),
+            login_password=state.get("login_password"),
         )
         return {
             "steps": result.steps,

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     max_reverification_attempts: int = 3
     crawler_timeout_ms: int = 30000
 
+    # Playwright MCP
+    playwright_mcp_command: str = "npx @playwright/mcp"
+    mcp_enrichment_enabled: bool = True
+
     # Step execution
     step_timeout_ms: int = 15000
     navigation_timeout_ms: int = 30000

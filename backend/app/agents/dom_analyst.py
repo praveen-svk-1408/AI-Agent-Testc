@@ -45,13 +45,19 @@ Given raw page snapshots (elements, forms, selectors) and a strategic test plan,
    Preference order: data-testid > role-based > aria-label > id > name > text-content.
    Name them descriptively: "loginEmailInput", "loginSubmitButton", "navCartIcon".
    Include 5-15 critical selectors covering the most important interactive elements.
+   When an accessibility tree is provided, cross-reference it with DOM elements to
+   identify the most stable selectors — prefer role-based selectors that match both
+   the DOM and the accessibility tree.
 
-4. **ACCESSIBILITY ISSUES**: Flag anything visible in element attributes:
+4. **ACCESSIBILITY ISSUES**: Flag anything visible in element attributes or the
+   accessibility tree:
    - Inputs without labels or aria-label
    - Buttons without accessible text
    - Images without alt text
    - Missing ARIA roles on interactive elements
    - Non-descriptive link text (e.g. "click here")
+   If an accessibility tree is provided, use it as the primary source for
+   accessibility issue detection — it reflects how assistive technologies see the page.
 
 5. **RECOMMENDED TEST PATHS**: Based on the navigation and forms, suggest 2-4 user
    flow paths to test. Example: "login → browse products → add to cart → checkout"
@@ -109,6 +115,8 @@ def _format_page_context(snapshots: list[PageSnapshot]) -> str:
                         f"type={field.get('type')} label='{field.get('label', '')}' "
                         f"id={field.get('id')}\n"
                     )
+        if snap.accessibility_tree:
+            part += f"Accessibility Tree:\n{snap.accessibility_tree}\n"
         parts.append(part)
     return "\n".join(parts) if parts else "No page data available."
 

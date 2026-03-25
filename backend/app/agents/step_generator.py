@@ -82,7 +82,12 @@ Rules:
 4. Include "verify_text" or "verify_element" assertions that match each assertion
    from the test intent.
 5. Prefer stable selectors: data-testid > role-based > aria-label > id > name > text.
-6. Use realistic but safe test data (e.g. "testuser@example.com", "Password123!").
+   When an accessibility tree is provided, cross-reference it with DOM elements to
+   choose role-based selectors (e.g. getByRole('button', {{ name: 'Submit' }})) that
+   match the tree — these are the most resilient against DOM changes.
+6. If test credentials are provided below, use them EXACTLY for login/authentication
+   form fields (username, email, password). Otherwise, use realistic but safe test
+   data (e.g. "testuser@example.com", "Password123!").
 7. Include ONE "screenshot" step at the end of each goal for evidence — not after
    every assertion.
 8. Every step MUST have a descriptive "description" field.
@@ -98,6 +103,7 @@ Rules:
     for TC-001 first, then all steps for TC-002, etc. If no test cases are provided,
     leave tc_id as null.
 {reviewer_feedback}
+{test_credentials}
 Available page information:
 {page_context}
 
@@ -136,6 +142,8 @@ def _format_page_context(snapshots: list[PageSnapshot]) -> str:
                 part += f"  - Form action={form.get('action')} method={form.get('method')}\n"
                 for field in form.get("fields", []):
                     part += f"    - {field.get('tag')} name={field.get('name')} type={field.get('type')} label={field.get('label')}\n"
+        if snap.accessibility_tree:
+            part += f"Accessibility Tree:\n{snap.accessibility_tree}\n"
         parts.append(part)
     return "\n".join(parts) if parts else "No page data available."
 
@@ -161,6 +169,8 @@ async def generate_steps(
     feedback: str | None = None,
     test_type: str = "functional",
     approved_test_cases: list[IEEE829TestCase] | None = None,
+    login_username: str | None = None,
+    login_password: str | None = None,
 ) -> StepGeneratorOutput:
     """
     Generate executable Playwright steps from structured test intent + DOM.
@@ -198,10 +208,22 @@ async def generate_steps(
                 lines.append(f"    {i}. {step}  →  {expected}")
         test_cases_slot = "\n".join(lines) + "\n"
 
+    # Build test credentials block for the prompt
+    if login_username or login_password:
+        cred_lines = ["Test Credentials (use these EXACTLY for login/authentication form fields):"]
+        if login_username:
+            cred_lines.append(f"  - Username/Email: {login_username}")
+        if login_password:
+            cred_lines.append(f"  - Password: {login_password}")
+        test_credentials = "\n".join(cred_lines)
+    else:
+        test_credentials = ""
+
     logger.info(
         "StepGenerator: converting %d goals into Playwright steps "
-        "(%d test cases, feedback=%s)",
+        "(%d test cases, feedback=%s, credentials=%s)",
         len(intent.goals), len(approved_test_cases or []), bool(feedback),
+        bool(login_username),
     )
 
     result: StepGeneratorOutput = await chain.ainvoke({
@@ -212,6 +234,7 @@ async def generate_steps(
         "assertions": "\n".join(f"- {a}" for a in intent.assertions) or "None",
         "edge_cases": "\n".join(f"- {e}" for e in intent.edge_cases) or "None",
         "reviewer_feedback": reviewer_feedback,
+        "test_credentials": test_credentials,
         "test_type": test_type,
         "test_cases_slot": test_cases_slot,
         "format_instructions": parser.get_format_instructions(),

@@ -47,6 +47,7 @@ class PageSnapshot(BaseModel):
     elements: list[PageElement] = []
     forms: list[dict] = []
     raw_html: str | None = None
+    accessibility_tree: str | None = None  # MCP accessibility snapshot text
 
 
 # ── DOM Analyst ───────────────────────────────────────────────────────

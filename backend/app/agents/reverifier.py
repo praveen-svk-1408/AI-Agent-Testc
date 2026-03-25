@@ -50,6 +50,9 @@ You receive:
 Review process – for EACH step:
 1. **Selector check** – Does the selector exist in the DOM context?
    If NOT, find the closest matching real selector and replace it.
+   When an accessibility tree is available, cross-reference it — if a selector does
+   not match the DOM elements list but DOES match an accessibility tree node, suggest
+   a role-based Playwright locator (e.g. getByRole, getByLabel) as the replacement.
 2. **Action validity** – Is the action appropriate for the target element?
    (e.g. "fill" on a button is invalid → change to "click")
 3. **Value check** – Does the value make sense for the element type?
@@ -104,6 +107,8 @@ def _format_page_context(snapshots: list[PageSnapshot]) -> str:
                 part += f"  - Form action={form.get('action')} method={form.get('method')}\n"
                 for field in form.get("fields", []):
                     part += f"    - {field.get('tag')} name={field.get('name')} type={field.get('type')} label={field.get('label')}\n"
+        if snap.accessibility_tree:
+            part += f"Accessibility Tree:\n{snap.accessibility_tree}\n"
         parts.append(part)
     return "\n".join(parts) if parts else "No page data available."
 

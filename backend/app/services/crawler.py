@@ -766,6 +766,15 @@ async def crawl_site(
 
         snapshots = crawl_task.result()
 
+        # ── MCP accessibility enrichment ──
+        from app.services.mcp_browser import enrich_snapshots_with_mcp
+        snapshots = await enrich_snapshots_with_mcp(
+            snapshots,
+            login_url=login_url,
+            login_username=login_username,
+            login_password=login_password,
+        )
+
         total_elements = sum(len(s.elements) for s in snapshots)
         if progress_callback:
             await progress_callback({
