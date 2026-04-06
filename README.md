@@ -43,7 +43,7 @@ An intelligent, multi-agent LLM-powered platform that converts **natural-languag
 | ---------- | ------------------------------------------------------------------ |
 | Frontend   | React 19, Vite 8, TypeScript, Tailwind CSS 4, React Router 7      |
 | Backend    | FastAPI, SQLAlchemy 2.0 (async), Pydantic v2, Alembic             |
-| AI/Agents  | LangChain, LangGraph, Groq (llama-3.3-70b) or Ollama (local)     |
+| AI/Agents  | LangChain, LangGraph, Groq / AWS Bedrock / Ollama (pluggable)    |
 | Browser    | Playwright (Python crawling + TypeScript test execution)           |
 | Database   | PostgreSQL 18 (asyncpg driver)                                    |
 | Realtime   | WebSocket (live test run progress, site crawl updates)             |
@@ -112,7 +112,10 @@ An intelligent, multi-agent LLM-powered platform that converts **natural-languag
 - **Python 3.13+**
 - **Node.js 20+** and npm
 - **PostgreSQL 18** installed and running
-- **Groq API key** (free at [console.groq.com](https://console.groq.com)) — or **Ollama** for local LLM inference
+- **LLM Provider** (one of the following):
+  - **AWS Bedrock** — requires an AWS account with Bedrock model access (enterprise recommended)
+  - **Groq** — free API key at [console.groq.com](https://console.groq.com)
+  - **Ollama** — local LLM inference, no API key needed
 
 ## Getting Started
 
@@ -196,8 +199,13 @@ APP_HOST=0.0.0.0
 APP_PORT=8000
 DEBUG=true
 
-# LLM Provider — "groq" (cloud) or "ollama" (local)
-LLM_PROVIDER=groq
+# LLM Provider — "bedrock" (AWS), "groq" (cloud), or "ollama" (local)
+LLM_PROVIDER=bedrock
+
+# AWS Bedrock (required if LLM_PROVIDER=bedrock)
+# Credentials auto-discovered from `aws configure` — no keys needed in .env
+AWS_REGION=us-east-1
+BEDROCK_MODEL_ID=us.meta.llama3-3-70b-instruct-v1:0
 
 # Groq (required if LLM_PROVIDER=groq)
 GROQ_API_KEY=gsk_your_api_key_here

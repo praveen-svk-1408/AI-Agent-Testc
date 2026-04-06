@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     artifacts_dir: str = "./artifacts"
     generated_tests_dir: str = "./generated-tests"
 
-    # LLM provider: "ollama" or "groq"
+    # LLM provider: "ollama", "groq", or "bedrock"
     llm_provider: str = "groq"
 
     # LLM / Ollama
@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     # Groq
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
+
+    # AWS Bedrock
+    aws_region: str = "us-east-1"
+    bedrock_model_id: str = "us.meta.llama3-3-70b-instruct-v1:0"
+
+    # AWS Bedrock AgentCore (remote execution)
+    agentcore_enabled: bool = False
+    agentcore_endpoint: str = ""
 
     # Agent settings
     max_reverification_attempts: int = 3

@@ -11,6 +11,7 @@ import uuid
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.test_case import TestCase
 from app.models.test_step import TestStep
 from app.models.test_suite import TestSuite
@@ -20,6 +21,7 @@ from app.services.test_output import generate_and_save_test_code
 from app.services.playwright_config import save_playwright_config
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 async def generate_test_case_steps(
@@ -62,20 +64,28 @@ async def generate_test_case_steps(
                 test_case.title, suite.name)
 
     try:
-        # Run the LangGraph workflow
-        workflow_state = await run_workflow(
-            title=test_case.title,
-            description=test_case.description,
-            base_url=suite.base_url,
-            app_description=suite.app_description,
-            test_type=test_case.test_type,
-            login_url=suite.login_url,
-            login_username=suite.login_username,
-            login_password=suite.login_password,
-            suite_id=str(suite.id),
-            suite_name=suite.name,
-            progress_callback=progress_callback,
-        )
+        # Choose between local workflow and remote AgentCore execution
+        if settings.agentcore_enabled:
+            workflow_state = await _run_via_agentcore(
+                test_case=test_case,
+                suite=suite,
+                progress_callback=progress_callback,
+            )
+        else:
+            # Run the LangGraph workflow locally
+            workflow_state = await run_workflow(
+                title=test_case.title,
+                description=test_case.description,
+                base_url=suite.base_url,
+                app_description=suite.app_description,
+                test_type=test_case.test_type,
+                login_url=suite.login_url,
+                login_username=suite.login_username,
+                login_password=suite.login_password,
+                suite_id=str(suite.id),
+                suite_name=suite.name,
+                progress_callback=progress_callback,
+            )
 
         if workflow_state["status"] == "failed":
             test_case.status = "failed"
@@ -158,3 +168,82 @@ async def generate_test_case_steps(
             "error": str(e),
             "progress": [f"Generation failed: {str(e)}"],
         }
+
+
+async def _run_via_agentcore(
+    test_case: TestCase,
+    suite: TestSuite,
+    progress_callback=None,
+) -> dict:
+    """
+    Run the test generation pipeline via a remote AgentCore agent.
+
+    1. Load pre-crawled page snapshots locally (AgentCore has no browser)
+    2. Enrich with MCP accessibility data
+    3. POST snapshots + params to the AgentCore endpoint
+    4. Return a dict that matches the local run_workflow() return shape
+    """
+    from app.services.site_crawl import load_crawl_snapshots
+    from app.services.crawler import crawl_pages
+    from app.services.mcp_browser import enrich_snapshots_with_mcp
+    from app.services.agentcore_client import invoke_agentcore_agent
+    from app.schemas.agent import GeneratedTestStep as GeneratedTestStepSchema
+
+    suite_id = str(suite.id)
+
+    if progress_callback:
+        await progress_callback(["Starting AgentCore remote execution…"])
+
+    # ── Step 1: Get page snapshots (cached or live crawl) ──
+    snapshots = await load_crawl_snapshots(suite_id)
+
+    if not snapshots:
+        logger.info("No cached snapshots for suite %s — doing live crawl of base_url", suite_id)
+        snapshots = await crawl_pages(
+            suite.base_url,
+            ["/"],
+            login_url=suite.login_url,
+            login_username=suite.login_username,
+            login_password=suite.login_password,
+        )
+
+    # ── Step 2: MCP enrichment ──
+    if settings.mcp_enrichment_enabled:
+        snapshots = await enrich_snapshots_with_mcp(
+            snapshots,
+            login_url=suite.login_url,
+            login_username=suite.login_username,
+            login_password=suite.login_password,
+        )
+
+    if progress_callback:
+        await progress_callback([f"Crawled {len(snapshots)} pages, invoking AgentCore agent…"])
+
+    # ── Step 3: Invoke the remote AgentCore agent ──
+    result = await invoke_agentcore_agent(
+        title=test_case.title,
+        description=test_case.description,
+        base_url=suite.base_url,
+        page_snapshots=snapshots,
+        app_description=suite.app_description,
+        test_type=test_case.test_type,
+        login_url=suite.login_url,
+        login_username=suite.login_username,
+        login_password=suite.login_password,
+        suite_name=suite.name,
+    )
+
+    # ── Step 4: Convert to local workflow state shape ──
+    # The remote agent returns serialised dicts; reconstruct Pydantic objects
+    final_steps = [
+        GeneratedTestStepSchema.model_validate(s) for s in result.get("final_steps", [])
+    ]
+
+    return {
+        "status": result.get("status", "failed"),
+        "error": result.get("error"),
+        "final_steps": final_steps,
+        "generated_code": result.get("generated_code"),
+        "code_file_name": result.get("code_file_name"),
+        "progress_messages": result.get("progress_messages", []),
+    }

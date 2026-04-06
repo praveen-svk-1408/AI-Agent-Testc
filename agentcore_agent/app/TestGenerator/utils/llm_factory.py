@@ -1,12 +1,12 @@
 """
-LLM Factory.
+LLM Factory for AgentCore Agent.
 
-Returns a ChatGroq, ChatOllama, or ChatBedrockConverse instance based on the
-LLM_PROVIDER setting. All agents should use get_llm() instead of instantiating
+Returns a ChatBedrockConverse, ChatGroq, or ChatOllama instance based on the
+LLM_PROVIDER setting. All agents use get_llm() instead of instantiating
 providers directly.
 """
 
-from app.config import get_settings
+from config import get_settings
 
 settings = get_settings()
 
@@ -17,7 +17,7 @@ def get_llm(temperature: float | None = None, num_predict: int | None = None):
 
     Args:
         temperature: Override the default llm_temperature from settings.
-        num_predict: Max tokens hint (only honoured by Ollama; ignored for Groq).
+        num_predict: Max tokens hint (mapped to max_tokens for Bedrock).
     """
     temp = temperature if temperature is not None else settings.llm_temperature
 

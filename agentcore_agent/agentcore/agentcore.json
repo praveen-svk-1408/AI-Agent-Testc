@@ -1,0 +1,14 @@
+{
+  "name": "ai-test-generator",
+  "description": "AI-powered test generation agent using a 7-agent LangGraph TDD pipeline. Accepts pre-crawled DOM snapshots and produces IEEE 829 test cases, executable Playwright steps, and TypeScript .spec.ts code.",
+  "version": "1.0.0",
+  "framework": "langgraph",
+  "language": "python",
+  "agents": [
+    {
+      "name": "TestGenerator",
+      "description": "7-agent TDD pipeline: Planner → DOM Analyst → Test Generator → TC Reviewer → Step Generator → Step Reviewer → Code Generator",
+      "entrypoint": "app/TestGenerator/main.py"
+    }
+  ]
+}
