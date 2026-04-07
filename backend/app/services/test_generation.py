@@ -1,10 +1,11 @@
 """
 Test Generation Service.
 
-Orchestrates the LangGraph workflow, persists generated test steps to the database,
-and generates Playwright test code files.
+Orchestrates the LangGraph workflow (or AgentCore Runtime invocation),
+persists generated test steps to the database, and generates Playwright test code files.
 """
 
+import json
 import logging
 import uuid
 
@@ -18,8 +19,91 @@ from app.agents.workflow import run_workflow
 from app.schemas.agent import GeneratedTestStep
 from app.services.test_output import generate_and_save_test_code
 from app.services.playwright_config import save_playwright_config
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+settings = get_settings()
+
+
+async def _invoke_agentcore(
+    title: str,
+    description: str,
+    base_url: str,
+    app_description: str | None,
+    test_type: str,
+    login_url: str | None,
+    login_username: str | None,
+    login_password: str | None,
+    suite_id: str | None,
+    suite_name: str | None,
+    progress_callback=None,
+) -> dict:
+    """Invoke the AgentCore Runtime deployed agent via boto3.
+
+    Returns a dict compatible with the LangGraph workflow state.
+    """
+    import boto3
+
+    client = boto3.client(
+        "bedrock-agentcore-runtime",
+        region_name=settings.agentcore_region,
+        aws_access_key_id=settings.aws_access_key_id or None,
+        aws_secret_access_key=settings.aws_secret_access_key or None,
+    )
+
+    payload = {
+        "title": title,
+        "description": description,
+        "base_url": base_url,
+        "app_description": app_description,
+        "test_type": test_type,
+        "login_url": login_url,
+        "login_username": login_username,
+        "login_password": login_password,
+        "suite_id": suite_id,
+        "suite_name": suite_name,
+    }
+
+    response = client.invoke_agent(
+        agentArn=settings.agentcore_agent_arn,
+        inputText=json.dumps(payload),
+    )
+
+    # Process streaming response
+    final_result = None
+    progress_messages = []
+
+    for event in response.get("completion", []):
+        if "chunk" in event:
+            chunk_data = json.loads(event["chunk"]["bytes"].decode("utf-8"))
+            if chunk_data.get("type") == "progress":
+                progress_messages.append(chunk_data["message"])
+                if progress_callback:
+                    await progress_callback([chunk_data["message"]])
+            elif chunk_data.get("type") == "result":
+                final_result = chunk_data
+
+    if not final_result:
+        return {
+            "status": "failed",
+            "error": "No result received from AgentCore",
+            "progress_messages": progress_messages,
+        }
+
+    # Convert AgentCore result to workflow-compatible dict
+    final_steps = [
+        GeneratedTestStep(**s) for s in final_result.get("final_steps", [])
+    ]
+
+    return {
+        "status": final_result.get("status", "success"),
+        "error": final_result.get("error"),
+        "progress_messages": progress_messages,
+        "final_steps": final_steps,
+        "generated_code": final_result.get("generated_code"),
+        "code_file_name": final_result.get("code_file_name"),
+    }
 
 
 async def generate_test_case_steps(
@@ -62,20 +146,37 @@ async def generate_test_case_steps(
                 test_case.title, suite.name)
 
     try:
-        # Run the LangGraph workflow
-        workflow_state = await run_workflow(
-            title=test_case.title,
-            description=test_case.description,
-            base_url=suite.base_url,
-            app_description=suite.app_description,
-            test_type=test_case.test_type,
-            login_url=suite.login_url,
-            login_username=suite.login_username,
-            login_password=suite.login_password,
-            suite_id=str(suite.id),
-            suite_name=suite.name,
-            progress_callback=progress_callback,
-        )
+        # Choose execution path: AgentCore Runtime or local LangGraph
+        if settings.agentcore_enabled and settings.agentcore_agent_arn:
+            logger.info("Using AgentCore Runtime for generation")
+            workflow_state = await _invoke_agentcore(
+                title=test_case.title,
+                description=test_case.description,
+                base_url=suite.base_url,
+                app_description=suite.app_description,
+                test_type=test_case.test_type,
+                login_url=suite.login_url,
+                login_username=suite.login_username,
+                login_password=suite.login_password,
+                suite_id=str(suite.id),
+                suite_name=suite.name,
+                progress_callback=progress_callback,
+            )
+        else:
+            # Run the LangGraph workflow (local)
+            workflow_state = await run_workflow(
+                title=test_case.title,
+                description=test_case.description,
+                base_url=suite.base_url,
+                app_description=suite.app_description,
+                test_type=test_case.test_type,
+                login_url=suite.login_url,
+                login_username=suite.login_username,
+                login_password=suite.login_password,
+                suite_id=str(suite.id),
+                suite_name=suite.name,
+                progress_callback=progress_callback,
+            )
 
         if workflow_state["status"] == "failed":
             test_case.status = "failed"

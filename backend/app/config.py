@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
 
+    # AgentCore Runtime (set to invoke deployed agent instead of local LangGraph)
+    agentcore_enabled: bool = False
+    agentcore_agent_arn: str = ""
+    agentcore_region: str = "us-east-1"
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+
     # Agent settings
     max_reverification_attempts: int = 3
     crawler_timeout_ms: int = 30000

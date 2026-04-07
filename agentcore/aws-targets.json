@@ -1,0 +1,10 @@
+{
+  "default": {
+    "region": "ap-south-1",
+    "account_id": "506221082278",
+    "runtime": {
+      "memory_size_mb": 2048,
+      "timeout_seconds": 900
+    }
+  }
+}
