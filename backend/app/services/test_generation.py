@@ -41,12 +41,17 @@ async def _invoke_agentcore(
 ) -> dict:
     """Invoke the AgentCore Runtime deployed agent via boto3.
 
+    Retries up to 3 times with backoff to handle cold-start initialization
+    timeouts (RuntimeClientError: "Runtime initialization time exceeded").
+
     Returns a dict compatible with the LangGraph workflow state.
     """
+    import asyncio
     import boto3
+    from botocore.exceptions import ClientError
 
     client = boto3.client(
-        "bedrock-agentcore-runtime",
+        "bedrock-agentcore",
         region_name=settings.agentcore_region,
         aws_access_key_id=settings.aws_access_key_id or None,
         aws_secret_access_key=settings.aws_secret_access_key or None,
@@ -65,18 +70,76 @@ async def _invoke_agentcore(
         "suite_name": suite_name,
     }
 
-    response = client.invoke_agent(
-        agentArn=settings.agentcore_agent_arn,
-        inputText=json.dumps(payload),
-    )
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [5, 15, 30]  # seconds between retries
+
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            if attempt > 0:
+                delay = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
+                msg = f"Cold start retry {attempt}/{MAX_RETRIES - 1} — waiting {delay}s for runtime to warm up…"
+                logger.info(msg)
+                if progress_callback:
+                    await progress_callback([msg])
+                await asyncio.sleep(delay)
+
+            response = client.invoke_agent_runtime(
+                agentRuntimeArn=settings.agentcore_agent_arn,
+                payload=json.dumps(payload).encode("utf-8"),
+                contentType="application/json",
+                accept="application/json",
+            )
+            # Success — break out of retry loop
+            break
+
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            error_msg = str(e)
+            last_error = error_msg
+
+            # Retry on cold-start initialization timeout
+            if "RuntimeClientError" in error_code or "initialization time exceeded" in error_msg.lower():
+                logger.warning(
+                    "AgentCore cold start timeout (attempt %d/%d): %s",
+                    attempt + 1, MAX_RETRIES, error_msg,
+                )
+                if attempt == MAX_RETRIES - 1:
+                    return {
+                        "status": "failed",
+                        "error": f"AgentCore runtime failed to initialize after {MAX_RETRIES} attempts: {error_msg}",
+                        "progress_messages": [f"Cold start timeout (attempt {i+1})" for i in range(MAX_RETRIES)],
+                    }
+                continue
+            else:
+                # Non-retryable error — return failed so fallback can handle it
+                logger.error("AgentCore non-retryable error: %s", error_msg)
+                return {
+                    "status": "failed",
+                    "error": error_msg,
+                    "progress_messages": [],
+                }
+    else:
+        return {
+            "status": "failed",
+            "error": f"AgentCore invocation failed after {MAX_RETRIES} retries: {last_error}",
+            "progress_messages": [],
+        }
 
     # Process streaming response
     final_result = None
     progress_messages = []
 
-    for event in response.get("completion", []):
-        if "chunk" in event:
-            chunk_data = json.loads(event["chunk"]["bytes"].decode("utf-8"))
+    response_body = response.get("response")
+    if response_body:
+        raw = response_body.read().decode("utf-8")
+        for line in raw.strip().splitlines():
+            if not line.strip():
+                continue
+            try:
+                chunk_data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
             if chunk_data.get("type") == "progress":
                 progress_messages.append(chunk_data["message"])
                 if progress_callback:
@@ -162,6 +225,26 @@ async def generate_test_case_steps(
                 suite_name=suite.name,
                 progress_callback=progress_callback,
             )
+
+            # Fall back to local workflow if AgentCore fails for any reason
+            if workflow_state["status"] == "failed":
+                logger.warning("AgentCore failed (%s) — falling back to local LangGraph workflow",
+                               workflow_state.get("error", "unknown")[:120])
+                if progress_callback:
+                    await progress_callback(["AgentCore runtime unavailable, falling back to local pipeline…"])
+                workflow_state = await run_workflow(
+                    title=test_case.title,
+                    description=test_case.description,
+                    base_url=suite.base_url,
+                    app_description=suite.app_description,
+                    test_type=test_case.test_type,
+                    login_url=suite.login_url,
+                    login_username=suite.login_username,
+                    login_password=suite.login_password,
+                    suite_id=str(suite.id),
+                    suite_name=suite.name,
+                    progress_callback=progress_callback,
+                )
         else:
             # Run the LangGraph workflow (local)
             workflow_state = await run_workflow(

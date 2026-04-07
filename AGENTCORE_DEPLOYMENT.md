@@ -48,6 +48,15 @@ uv --version            # any
 aws --version           # aws-cli/2.x
 ```
 
+> **Project Structure:** The AgentCore CLI expects `app/` and `agentcore/` as siblings at the project root:
+> ```
+> AI-Agent-Testc/          ← project root (run all agentcore CLI commands here)
+>   agentcore/             ← CLI config (agentcore.json, aws-targets.json)
+>   app/AITestAgent/       ← agent source code
+>   backend/               ← FastAPI backend
+>   frontend/              ← React frontend
+> ```
+
 ---
 
 ## 2. AWS Account Setup
@@ -162,16 +171,15 @@ aws bedrock list-foundation-models --region ap-south-1 --query "modelSummaries[?
 Edit `agentcore/aws-targets.json` with your AWS Account ID:
 
 ```json
-{
-  "default": {
+[
+  {
+    "name": "default",
     "region": "ap-south-1",
-    "account_id": "123456789012",
-    "runtime": {
-      "memory_size_mb": 2048,
-      "timeout_seconds": 900
-    }
+    "account": "123456789012",
+    "memorySizeMb": 2048,
+    "timeoutSeconds": 900
   }
-}
+]
 ```
 
 Replace `123456789012` with your actual AWS Account ID. You can find it with:
@@ -194,7 +202,7 @@ aws sts get-caller-identity --query "Account" --output text
 ### Option A — Using uv (recommended, matches CLI toolchain)
 
 ```powershell
-cd agentcore/app/AITestAgent
+cd app/AITestAgent
 uv venv
 .venv\Scripts\activate      # Windows
 # source .venv/bin/activate  # Linux/Mac
@@ -205,7 +213,7 @@ uv pip install -e .
 ### Option B — Using python venv + pip
 
 ```powershell
-cd agentcore/app/AITestAgent
+cd app/AITestAgent
 python -m venv .venv
 .venv\Scripts\activate      # Windows
 # source .venv/bin/activate  # Linux/Mac
@@ -228,12 +236,13 @@ This installs:
 
 ### 8.1 Start the Local Dev Server
 
-From the project root:
+From the **project root** (not from the `agentcore/` subdirectory):
 
 ```powershell
-cd agentcore
 agentcore dev
 ```
+
+> **Important:** The AgentCore CLI must be run from the project root directory (where the `agentcore/` and `app/` folders are siblings). Running it from inside `agentcore/` will fail.
 
 This starts a local invocation endpoint that mimics the AgentCore Runtime. The CLI watches for file changes.
 
@@ -242,10 +251,10 @@ This starts a local invocation endpoint that mimics the AgentCore Runtime. The C
 Open a new terminal and invoke locally:
 
 ```powershell
-agentcore invoke --payload '{
+agentcore invoke --prompt '{
   "title": "Login Test",
-  "description": "Test that a user can log in with valid credentials",
-  "base_url": "http://localhost:3000",
+  "description": "Test that a user can log in with valid credentials Email: test@example.com Password: password123",
+  "base_url": "http://localhost:3005",
   "test_type": "functional",
   "app_description": "Sample e-commerce application"
 }'
@@ -269,7 +278,6 @@ AWS_REGION=ap-south-1
 From the project root:
 
 ```powershell
-cd agentcore
 agentcore deploy
 ```
 
@@ -300,7 +308,7 @@ Copy the Agent ARN from the deploy output. You'll need it to:
 ### 10.1 Via AgentCore CLI
 
 ```powershell
-agentcore invoke --payload '{
+agentcore invoke --prompt '{
   "title": "Login Test",
   "description": "Test user login with valid credentials and verify redirect to dashboard",
   "base_url": "https://myapp.example.com",
@@ -326,10 +334,10 @@ aws bedrock-agentcore invoke-agent `
 ```python
 import boto3, json
 
-client = boto3.client("bedrock-agentcore-runtime", region_name="ap-south-1")
+client = boto3.client("bedrock-agentcore", region_name="ap-south-1")
 
-response = client.invoke_agent(
-    agentId="arn:aws:bedrock-agentcore:ap-south-1:123456789012:agent/AITestAgent",
+response = client.invoke_agent_runtime(
+    agentRuntimeArn="arn:aws:bedrock-agentcore:ap-south-1:123456789012:agent/AITestAgent",
     payload=json.dumps({
         "title": "Login Test",
         "description": "Test user login",
@@ -399,7 +407,6 @@ The AgentCore CLI supports adding features incrementally:
 ### Memory (persistent context across sessions)
 
 ```powershell
-cd agentcore
 agentcore add memory
 agentcore deploy
 ```
@@ -450,7 +457,6 @@ aws logs tail "/aws/bedrock-agentcore/AITestAgent" --follow --region ap-south-1
 AgentCore supports OpenTelemetry out of the box. Add observability:
 
 ```powershell
-cd agentcore
 agentcore add observability
 agentcore deploy
 ```
@@ -473,7 +479,7 @@ This enables distributed tracing across all 7 agents in the pipeline.
 |---------|-------|-----|
 | `agentcore deploy` fails with permissions error | Missing IAM policies | Attach `BedrockAgentCoreFullAccess` and `AmazonBedrockFullAccess` |
 | `AccessDeniedException` on model invocation | Claude Haiku not enabled | Go to Bedrock Console → Model access → Enable Claude 3 Haiku |
-| `ModuleNotFoundError: strands` | Dependencies not installed | Run `uv pip install -e .` in `agentcore/app/AITestAgent/` |
+| `ModuleNotFoundError: strands` | Dependencies not installed | Run `uv pip install -e .` in `app/AITestAgent/` |
 | Timeout errors during pipeline execution | `timeout_seconds` too low | Increase to 900 in `aws-targets.json` |
 | `account_id` empty error | Not configured in aws-targets.json | Run `aws sts get-caller-identity` and set the account_id |
 | Backend returns 500 on generate | `AGENTCORE_AGENT_ARN` not set | Add the ARN from `agentcore deploy` output to `.env` |
@@ -522,18 +528,17 @@ aws configure
 #    Edit agentcore/aws-targets.json → set "account_id": "YOUR_ACCOUNT_ID"
 
 # 4. Install agent dependencies
-cd agentcore/app/AITestAgent
+cd app/AITestAgent
 uv venv
 .venv\Scripts\activate
 uv pip install -e .
-cd ../../..
+cd ../..
 
-# 5. Test locally
-cd agentcore
+# 5. Test locally (from project root)
 agentcore dev
-# (in another terminal) agentcore invoke --payload '{"title":"Test","description":"Test login","base_url":"http://localhost:3000","test_type":"functional"}'
+# (in another terminal) agentcore invoke --prompt '{"title":"Test","description":"Test login","base_url":"http://localhost:3000","test_type":"functional"}'
 
-# 6. Deploy to AWS
+# 6. Deploy to AWS (from project root)
 agentcore deploy
 
 # 7. Configure backend
@@ -543,7 +548,7 @@ agentcore deploy
 #      AGENTCORE_REGION=ap-south-1
 
 # 8. Start backend
-cd ../backend
+cd backend
 pip install -r requirements.txt
 python start.py
 

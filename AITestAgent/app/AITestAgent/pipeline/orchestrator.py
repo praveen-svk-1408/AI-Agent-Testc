@@ -8,31 +8,18 @@ Runs the 8-node TDD pipeline sequentially with retry loops for test case review
 Ported from: backend/app/agents/workflow.py (build_workflow + all node functions)
 """
 
+from __future__ import annotations
+
 import logging
 import os
-from typing import AsyncGenerator
+from typing import AsyncGenerator, TYPE_CHECKING
 
-from schemas.agent import (
-    DOMAnalysis,
-    TestPlan,
-    TestCaseReviewResult,
-    StepReviewResult,
-    GeneratedTestStep,
-    IEEE829TestCase,
-)
-from pipeline.state import PipelineState
+if TYPE_CHECKING:
+    from schemas.agent import GeneratedTestStep
+    from pipeline.state import PipelineState
 
-# Agent imports
-from agents.planner import plan_and_analyze
-from agents.dom_analyst import analyze_dom
-from agents.test_generator import generate_test_cases
-from agents.test_case_reviewer import review_test_cases
-from agents.step_generator import generate_steps
-from agents.reverifier import review_steps
-from agents.code_generator import generate_test_suite_code
-
-# Browser crawl
-from tools.browser_crawl import crawl_pages, load_crawl_snapshots
+# NOTE: All heavy imports (schemas, agents, tools) are deferred to run_pipeline()
+# to reduce module-level import time and stay within AgentCore's 30-second init window.
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +44,23 @@ async def run_pipeline(
     Pipeline: Planner → LoadSnapshots → DOMAnalyst → TestGenerator → TestCaseReviewer
               → StepGenerator → StepReviewer → QACodeGenerator
     """
+    # Lazy imports — deferred from module level to avoid cold-start timeout.
+    # Each agent module pulls in strands + BedrockModel (boto3) which are heavy.
+    from schemas.agent import (
+        DOMAnalysis,
+        TestPlan,
+        TestCaseReviewResult,
+        StepReviewResult,
+    )
+    from agents.planner import plan_and_analyze
+    from agents.dom_analyst import analyze_dom
+    from agents.test_generator import generate_test_cases
+    from agents.test_case_reviewer import review_test_cases
+    from agents.step_generator import generate_steps
+    from agents.reverifier import review_steps
+    from agents.code_generator import generate_test_suite_code
+    from tools.browser_crawl import crawl_pages, load_crawl_snapshots
+
     state.add_progress("Starting 7-agent TDD pipeline…")
     yield state.progress_messages[-1]
 

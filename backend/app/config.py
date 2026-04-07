@@ -17,8 +17,12 @@ class Settings(BaseSettings):
     artifacts_dir: str = "./artifacts"
     generated_tests_dir: str = "./generated-tests"
 
-    # LLM provider: "ollama" or "groq"
-    llm_provider: str = "groq"
+    # LLM provider: "bedrock", "groq", or "ollama"
+    llm_provider: str = "bedrock"
+
+    # AWS Bedrock
+    bedrock_region: str = "us-east-1"
+    bedrock_model: str = "anthropic.claude-3-haiku-20240307-v1:0"
 
     # LLM / Ollama
     ollama_base_url: str = "http://localhost:11434"
@@ -30,9 +34,9 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
 
     # AgentCore Runtime (set to invoke deployed agent instead of local LangGraph)
-    agentcore_enabled: bool = False
+    agentcore_enabled: bool = True
     agentcore_agent_arn: str = ""
-    agentcore_region: str = "us-east-1"
+    agentcore_region: str = "ap-south-1"
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
 

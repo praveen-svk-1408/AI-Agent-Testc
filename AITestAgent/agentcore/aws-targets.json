@@ -1,0 +1,9 @@
+[
+  {
+    "name": "default",
+    "region": "ap-south-1",
+    "account": "506221082278",
+    "memorySizeMb": 2048,
+    "timeoutSeconds": 900
+  }
+]

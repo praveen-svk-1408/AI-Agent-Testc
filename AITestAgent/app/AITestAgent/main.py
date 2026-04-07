@@ -1,19 +1,14 @@
 """
 AgentCore Runtime Entrypoint.
 
-This is the main entry point for the BedrockAgentCoreApp. It wraps the
-deterministic pipeline orchestrator and exposes it as an AgentCore-compatible
-handler that streams progress events back to the caller.
+Minimal module-level code to stay within the 30-second initialization window.
+All heavy imports (strands, boto3, agents, pipeline) are deferred to handler time.
 """
 
 import json
 import logging
-import asyncio
 
 from bedrock_agentcore import BedrockAgentCoreApp
-
-from pipeline.state import PipelineState
-from pipeline.orchestrator import run_pipeline
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,6 +39,10 @@ async def handler(request):
     """
     # Parse request payload
     payload = request if isinstance(request, dict) else json.loads(str(request))
+
+    # Lazy imports — deferred from module level to avoid cold-start timeout
+    from pipeline.state import PipelineState
+    from pipeline.orchestrator import run_pipeline
 
     title = payload.get("title", payload.get("prompt", "Unnamed Test"))
     description = payload.get("description", payload.get("prompt", ""))

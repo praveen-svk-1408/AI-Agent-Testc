@@ -1,0 +1,16 @@
+{
+  "targets": {
+    "default": {
+      "resources": {
+        "runtimes": {
+          "AITestAgent": {
+            "runtimeId": "AITestAgent_AITestAgent-hZg8baB0uv",
+            "runtimeArn": "arn:aws:bedrock-agentcore:ap-south-1:506221082278:runtime/AITestAgent_AITestAgent-hZg8baB0uv",
+            "roleArn": "arn:aws:iam::506221082278:role/AgentCore-AITestAgent-def-ApplicationAgentAITestAge-8DHhMzg3pOg9"
+          }
+        },
+        "stackName": "AgentCore-AITestAgent-default"
+      }
+    }
+  }
+}
